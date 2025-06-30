@@ -1,125 +1,116 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { GoogleOAuthProvider } from '@react-oauth/google';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import AgeCheckModal from './components/AgeCheckModal';
+import Kontakt from './pages/Kontakt';
+import Datenschutz from './pages/Datenschutz';
+import Impressum from './pages/Impressum';
 import { biconomyService } from './services/BiconomyService';
 import { PlusOne, Point } from './types';
 import atzengoldLogo from './assets/atzengold-logo.png';
 import chainTurn from './assets/chain_turn.png';
-import AgeCheckModal from './components/AgeCheckModal';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import Winsite from './pages/Winsite';
 import RegisterOverlay from './components/RegisterOverlay';
 import BurgerMenu from './components/BurgerMenu';
 import { motion, AnimatePresence } from 'framer-motion';
-import { authService } from './services/auth';
 
-console.log('Google Client ID:', import.meta.env.VITE_GOOGLE_CLIENT_ID);
+const ORANGE = '#d69229';
 
 const App: React.FC = () => {
+  // FORCE age check modal for testing
   const [showAgeCheck, setShowAgeCheck] = useState(true);
-  const [currentPage, setCurrentPage] = useState('game');
+
+  const handleAgeCheckConfirm = (allowed: boolean) => {
+    if (allowed) {
+      localStorage.setItem('ageChecked', 'true');
+      localStorage.setItem('dsgvoAccepted', 'true');
+      setShowAgeCheck(false);
+    }
+  };
+
+  if (showAgeCheck) {
+    return (
+      <div className="app-container">
+        <div className="mobile-container">
+          <AgeCheckModal onConfirm={handleAgeCheckConfirm} />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID || ''}>
+      <div className="app-container">
+        <div className="mobile-container" style={{ position: 'relative' }}>
+          <Router>
+            <Routes>
+              <Route path="/game/:code" element={<GamePage />} />
+              <Route path="/game" element={<GamePage />} />
+              <Route path="/kontakt" element={<Kontakt />} />
+              <Route path="/datenschutz" element={<Datenschutz />} />
+              <Route path="/impressum" element={<Impressum />} />
+              <Route path="/" element={<GamePage />} />
+            </Routes>
+          </Router>
+        </div>
+      </div>
+    </GoogleOAuthProvider>
+  );
+};
+
+// --- GamePage component ---
+export function GamePage() {
   const [atzencoins, setAtzencoins] = useState(0);
   const [rotation, setRotation] = useState(0);
   const [plusOnes, setPlusOnes] = useState<PlusOne[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [showRegisterOverlay, setShowRegisterOverlay] = useState(false);
   const [showLoginOverlay, setShowLoginOverlay] = useState(false);
-  const [isFlipped, setIsFlipped] = useState(false);
-  const [user, setUser] = useState<any>(null);
-  const [walletAddress, setWalletAddress] = useState<string>('');
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [error, setError] = useState<string>('');
-  const [loadingMessage, setLoadingMessage] = useState<string>('');
-  const [email, setEmail] = useState<string>('');
-  const [localPoints, setLocalPoints] = useState(0);
-  const [hasUnsyncedPoints, setHasUnsyncedPoints] = useState(false);
-  const [logoSize] = useState(391);
-  const [chainSize] = useState(400);
-  const [verticalOffset] = useState(2);
   const [registerOverlayDismissed, setRegisterOverlayDismissed] = useState(() => {
     return localStorage.getItem('registerOverlayDismissed') === 'true';
   });
-
   const wheelRef = useRef<HTMLDivElement>(null);
   const lastPoint = useRef<Point | null>(null);
   const plusOneCounter = useRef(0);
   const lastRotation = useRef(0);
-
   const maxPoints = 560;
   const progress = Math.max(0, Math.min(1, atzencoins / maxPoints));
+  // --- Hour tracking for +1s ---
+  const lastHour = React.useRef<number | null>(null);
+  const WHEEL_SIZE = 400; // px
+  const WHEEL_RADIUS = WHEEL_SIZE / 2;
+  const WHEEL_CENTER = { x: WHEEL_RADIUS, y: WHEEL_RADIUS };
+  const wheelMargin = 200;
+  const barMargin = 8;
 
-  useEffect(() => {
-    // DSGVO check
-    const dsgvoAccepted = localStorage.getItem('dsgvoAccepted');
-    if (dsgvoAccepted === 'true') {
-      setShowAgeCheck(false);
-    }
-    // Background smart wallet creation for logged-in users
-    const user = authService.getCurrentUser();
-    if (user && !walletAddress) {
-      (async () => {
-        try {
-          setIsConnecting(true);
-          const result = await biconomyService.initializeSmartAccount(user.user.email || user.user.id);
-          setWalletAddress(result.address);
-          setIsConnecting(false);
-        } catch (err) {
-          setError('Smart wallet initialization failed');
-          setIsConnecting(false);
-        }
-      })();
-    }
-    // Auto-sync points when maxPoints reached
-    if (walletAddress && hasUnsyncedPoints && atzencoins >= maxPoints && localPoints > 0) {
-      (async () => {
-        try {
-          setLoadingMessage('Syncing points to blockchain...');
-          await biconomyService.addPoints(walletAddress, localPoints);
-          setHasUnsyncedPoints(false);
-          setLocalPoints(0);
-          setLoadingMessage('Points synced!');
-          setTimeout(() => setLoadingMessage(''), 2000);
-        } catch (err) {
-          setError('Sync failed');
-          setLoadingMessage('');
-        }
-      })();
-    }
-  }, [walletAddress, hasUnsyncedPoints, atzencoins, maxPoints, localPoints]);
-
-  const handleAgeConfirm = () => {
-    setIsFlipped(true);
-  };
-
-  const handleDSGVOAccept = () => {
-    localStorage.setItem('dsgvoAccepted', 'true');
-    setShowAgeCheck(false);
-  };
-
-  const addPlusOne = (x: number, y: number) => {
+  // +1 animation logic for hour positions
+  const addPlusOneAtHour = (hour: number) => {
+    // hour: 0 = 12, 1 = 1, ..., 11 = 11
+    const angleDeg = (hour * 30) - 90; // 0h = -90deg (top)
+    const angleRad = (angleDeg * Math.PI) / 180;
+    const rimRadius = WHEEL_RADIUS * 0.92; // slightly inside the rim
+    const x = WHEEL_CENTER.x + rimRadius * Math.cos(angleRad);
+    const y = WHEEL_CENTER.y + rimRadius * Math.sin(angleRad);
     const id = plusOneCounter.current++;
     setPlusOnes(prev => [...prev, { id, x, y }]);
-    
     setTimeout(() => {
       setPlusOnes(prev => prev.filter(p => p.id !== id));
-    }, 1000);
+    }, 2000);
   };
 
+  // Wheel logic (unchanged, but no wallet logic)
   const handleMouseDown = (e: React.MouseEvent) => {
     setIsDragging(true);
     lastPoint.current = { x: e.clientX, y: e.clientY };
     lastRotation.current = rotation;
   };
-
   const handleMouseMove = (e: React.MouseEvent) => {
     if (!isDragging || !lastPoint.current || !wheelRef.current) return;
-
     const currentPoint = { x: e.clientX, y: e.clientY };
     const wheelRect = wheelRef.current.getBoundingClientRect();
     const wheelCenter = {
       x: wheelRect.left + wheelRect.width / 2,
       y: wheelRect.top + wheelRect.height / 2,
     };
-
     const lastAngle = Math.atan2(
       lastPoint.current.y - wheelCenter.y,
       lastPoint.current.x - wheelCenter.x
@@ -128,46 +119,40 @@ const App: React.FC = () => {
       currentPoint.y - wheelCenter.y,
       currentPoint.x - wheelCenter.x
     );
-
     let angleDiff = currentAngle - lastAngle;
     if (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
     if (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
-
     const newRotation = rotation + (angleDiff * 180) / Math.PI;
     setRotation(newRotation);
-
-    // Add points for every 90 degrees
-    const rotationDiff = Math.abs(newRotation - lastRotation.current);
-    if (rotationDiff >= 90 && atzencoins < maxPoints) {
-      setAtzencoins(prev => Math.min(prev + 1, maxPoints));
-      setLocalPoints(prev => prev + 1);
-      setHasUnsyncedPoints(true);
-      addPlusOne(currentPoint.x, currentPoint.y);
-      lastRotation.current = newRotation;
+    // --- +1 at hour positions ---
+    const normalizedRotation = ((newRotation % 360) + 360) % 360;
+    const currentHour = Math.floor(((normalizedRotation + 360) % 360) / 30) % 12;
+    if (lastHour.current === null || currentHour !== lastHour.current) {
+      if (atzencoins < maxPoints) {
+        setAtzencoins(prev => Math.min(prev + 1, maxPoints));
+        addPlusOneAtHour(currentHour);
+        lastRotation.current = newRotation;
+      }
+      lastHour.current = currentHour;
     }
-
     lastPoint.current = currentPoint;
   };
-
   const handleMouseUp = () => {
     setIsDragging(false);
     lastPoint.current = null;
-    
+    lastHour.current = null;
     if (atzencoins >= maxPoints) {
       setShowRegisterOverlay(true);
     }
   };
-
   const handleTouchStart = (e: React.TouchEvent) => {
     const touch = e.touches[0];
     setIsDragging(true);
     lastPoint.current = { x: touch.clientX, y: touch.clientY };
     lastRotation.current = rotation;
   };
-
   const handleTouchMove = (e: React.TouchEvent) => {
     if (!isDragging || !lastPoint.current || !wheelRef.current) return;
-
     const touch = e.touches[0];
     const currentPoint = { x: touch.clientX, y: touch.clientY };
     const wheelRect = wheelRef.current.getBoundingClientRect();
@@ -175,7 +160,6 @@ const App: React.FC = () => {
       x: wheelRect.left + wheelRect.width / 2,
       y: wheelRect.top + wheelRect.height / 2,
     };
-
     const lastAngle = Math.atan2(
       lastPoint.current.y - wheelCenter.y,
       lastPoint.current.x - wheelCenter.x
@@ -184,58 +168,74 @@ const App: React.FC = () => {
       currentPoint.y - wheelCenter.y,
       currentPoint.x - wheelCenter.x
     );
-
     let angleDiff = currentAngle - lastAngle;
     if (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
     if (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
-
     const newRotation = rotation + (angleDiff * 180) / Math.PI;
     setRotation(newRotation);
-
-    // Add points for every 90 degrees
-    const rotationDiff = Math.abs(newRotation - lastRotation.current);
-    if (rotationDiff >= 90 && atzencoins < maxPoints) {
-      setAtzencoins(prev => Math.min(prev + 1, maxPoints));
-      setLocalPoints(prev => prev + 1);
-      setHasUnsyncedPoints(true);
-      addPlusOne(currentPoint.x, currentPoint.y);
-      lastRotation.current = newRotation;
+    // --- +1 at hour positions ---
+    const normalizedRotation = ((newRotation % 360) + 360) % 360;
+    const currentHour = Math.floor(((normalizedRotation + 360) % 360) / 30) % 12;
+    if (lastHour.current === null || currentHour !== lastHour.current) {
+      if (atzencoins < maxPoints) {
+        setAtzencoins(prev => Math.min(prev + 1, maxPoints));
+        addPlusOneAtHour(currentHour);
+        lastRotation.current = newRotation;
+      }
+      lastHour.current = currentHour;
     }
-
     lastPoint.current = currentPoint;
   };
-
   const handleTouchEnd = () => {
     setIsDragging(false);
     lastPoint.current = null;
-    
+    lastHour.current = null;
     if (atzencoins >= maxPoints) {
       setShowRegisterOverlay(true);
     }
   };
-
   const handleRegisterOverlayClose = () => {
     setShowRegisterOverlay(false);
     setRegisterOverlayDismissed(true);
     localStorage.setItem('registerOverlayDismissed', 'true');
   };
-
-  useEffect(() => {
-    if (atzencoins >= maxPoints && !registerOverlayDismissed) {
-      setShowRegisterOverlay(true);
-    }
-  }, [atzencoins, maxPoints, registerOverlayDismissed]);
-
   const handleShowLoginRegister = () => {
-    setShowRegisterOverlay(true);
-    setRegisterOverlayDismissed(false);
-    localStorage.removeItem('registerOverlayDismissed');
+    setShowLoginOverlay(true);
   };
 
-  const renderGamePage = () => (
-    <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', minHeight: '100vh', position: 'relative' }}>
-      <div className="atzencoin-counter">{atzencoins}</div>
-      <div style={{ width: '100%', height: 400, position: 'relative', margin: '30px 0 30px 0', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+  return (
+    <div className="game-page">
+      {/* Atzencoins Counter - copied from Atzenwin */}
+      <div style={{ 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'center', 
+        width: '100%', 
+        position: 'absolute', 
+        top: 16, 
+        left: 0, 
+        right: 0, 
+        zIndex: 100 
+      }}>
+        <div style={{ 
+          background: '#03855c', 
+          color: '#EDD1B2', 
+          fontFamily: 'Montserrat, monospace', 
+          fontWeight: 700, 
+          fontSize: 28, 
+          borderRadius: 18, 
+          padding: '8px 18px', 
+          minWidth: 120, 
+          height: 56, 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center', 
+          boxShadow: '0 2px 8px #0001' 
+        }}>
+          Atzencoins: {atzencoins}
+        </div>
+      </div>
+      <div className="wheel-section" style={{ marginTop: wheelMargin }}>
         <div
           ref={wheelRef}
           className="wheel-container"
@@ -246,96 +246,47 @@ const App: React.FC = () => {
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
-          style={{
-            position: 'absolute',
-            left: '50%',
-            top: `calc(50% + ${verticalOffset}px)`,
-            transform: 'translate(-50%, -50%)',
-            width: chainSize,
-            height: chainSize,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
         >
           <img
             src={chainTurn}
             alt="Chain Turn"
+            className="chain-turn"
             style={{
-              position: 'absolute',
-              left: '50%',
-              top: '50%',
-              width: chainSize,
-              height: chainSize,
-              transform: `translate(-50%, -50%) rotate(${rotation}deg)` ,
+              transform: `rotate(${rotation}deg)`,
               transition: isDragging ? 'none' : 'transform 0.3s ease-out',
-              zIndex: 1,
-              pointerEvents: 'none',
-              objectFit: 'contain',
-              aspectRatio: '1/1',
             }}
           />
           <img
             src={atzengoldLogo}
             alt="Atzengold Logo"
-            style={{
-              position: 'absolute',
-              left: '50%',
-              top: '50%',
-              width: logoSize,
-              height: logoSize,
-              transform: 'translate(-50%, -50%)',
-              zIndex: 2,
-              pointerEvents: 'none',
-              background: 'none',
-              objectFit: 'contain',
-              aspectRatio: '1/1',
-            }}
+            className="atzengold-logo"
           />
         </div>
       </div>
-      {/* Progress bar below the wheel */}
-      <div className="progress-bar" style={{ marginTop: 0, marginBottom: 20, position: 'relative', width: '90%' }}>
+      {/* Progress Bar - move together with wheel */}
+      <div className="progress-bar" style={{ marginTop: barMargin }}>
         <div
           className="progress-fill"
-          style={{
-            width: `${(1 - progress) * 100}%`,
-            right: 0,
-            left: 'auto',
-            position: 'absolute',
-            height: '100%',
-            backgroundColor: '#03855c',
-            borderRadius: '10px',
-            transition: 'width 0.3s ease',
-          }}
+          style={{ width: `${(1 - progress) * 100}%` }}
         />
       </div>
-      {/* Wallet connect and sync UI */}
-      {error && (
-        <div style={{ color: 'red', textAlign: 'center', margin: '10px 0', fontSize: '14px' }}>
-          {error}
-        </div>
-      )}
-      {loadingMessage && (
-        <div style={{ color: '#03855c', textAlign: 'center', margin: '10px 0', fontSize: '14px' }}>
-          {loadingMessage}
-        </div>
-      )}
+      {/* +1 Animations */}
       <AnimatePresence>
         {plusOnes.map(plusOne => (
           <motion.div
             key={plusOne.id}
             className="plus-one"
-            initial={{ opacity: 1, y: 0 }}
-            animate={{ opacity: 0, y: -50 }}
+            initial={{ opacity: 1, y: 0, scale: 1 }}
+            animate={{ opacity: 0, y: -300, scale: 1.2 }}
             exit={{ opacity: 0 }}
+            transition={{ duration: 2 }}
             style={{
               left: plusOne.x,
               top: plusOne.y,
-              position: 'absolute',
-              color: '#d69229',
-              fontWeight: 'bold',
+              color: ORANGE,
               fontSize: 32,
+              fontWeight: 'bold',
+              position: 'absolute',
               pointerEvents: 'none',
               zIndex: 10,
             }}
@@ -344,163 +295,22 @@ const App: React.FC = () => {
           </motion.div>
         ))}
       </AnimatePresence>
-    </div>
-  );
-
-  const renderScoreboard = () => (
-    <div className="page scoreboard">
-      <h1>Scoreboard</h1>
-      
-      <div className="stats-grid">
-        <div className="stat-card">
-          <div className="stat-value">{atzencoins}</div>
-          <div className="stat-label">Atzencoins</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value">{Math.floor(progress * 100)}%</div>
-          <div className="stat-label">Progress</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value">{localPoints}</div>
-          <div className="stat-label">Unsynced Points</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value">{walletAddress ? 'Connected' : 'Not Connected'}</div>
-          <div className="stat-label">Wallet Status</div>
-        </div>
-      </div>
-
-      {walletAddress && (
-        <div style={{ margin: '20px 0', padding: '15px', backgroundColor: 'rgba(3, 133, 92, 0.1)', borderRadius: '10px' }}>
-          <div style={{ fontSize: '14px', color: '#03855c' }}>
-            <strong>Wallet Address:</strong><br />
-            {walletAddress}
-          </div>
-        </div>
-      )}
-
-      <div className="coming-soon">
-        🏆 Collectibles - SOON
-      </div>
-      
-      <div className="coming-soon">
-        🥇 Real Gold Rewards - SOON
-      </div>
-    </div>
-  );
-
-  const renderLoginPage = () => (
-    <div className="page">
-      <h1 style={{ textAlign: 'center', color: '#03855c', marginBottom: '30px' }}>
-        Login
-      </h1>
-      
-      <div className="form-group">
-        <label>Email</label>
-        <input 
-          type="email" 
-          placeholder="Enter your email" 
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
+      <BurgerMenu onShowLoginRegister={handleShowLoginRegister} />
+      {showRegisterOverlay && !registerOverlayDismissed && (
+        <RegisterOverlay
+          atzencoins={atzencoins}
+          onClose={handleRegisterOverlayClose}
         />
-      </div>
-      
-      <div className="form-group">
-        <label>Password</label>
-        <input type="password" placeholder="Enter your password" />
-      </div>
-      
-      <div style={{ textAlign: 'center' }}>
-        <button className="btn">Login</button>
-        <button className="btn btn-secondary">Login with Google</button>
-      </div>
-
-      <div style={{ textAlign: 'center', marginTop: '30px' }}>
-        <button 
-          onClick={() => {}}
-          disabled={true}
-          className="btn"
-        >
-          Connect Blockchain Wallet
-        </button>
-      </div>
+      )}
+      {showLoginOverlay && (
+        <RegisterOverlay
+          atzencoins={atzencoins}
+          onClose={() => setShowLoginOverlay(false)}
+          mode="menu"
+        />
+      )}
     </div>
   );
-
-  const renderTestPage = () => (
-    <div style={{ minHeight: '100vh', width: '100vw', background: '#EDD1B2', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ width: 375, margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-        <h1 style={{ textAlign: 'center' }}>Test Page: Image Display</h1>
-        <div style={{ margin: '20px 0', width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          <div style={{ marginBottom: 40, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-            <img src={atzengoldLogo} alt="Atzengold Logo" style={{ maxWidth: logoSize, maxHeight: logoSize, width: logoSize, height: logoSize, display: 'block', marginBottom: 10, objectFit: 'contain', aspectRatio: '1/1' }} />
-          </div>
-          <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-            <img src={chainTurn} alt="Chain Turn" style={{ maxWidth: chainSize, maxHeight: chainSize, width: chainSize, height: chainSize, display: 'block', marginBottom: 10, objectFit: 'contain', aspectRatio: '1/1' }} />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
-  if (showAgeCheck) {
-    return <AgeCheckModal onConfirm={() => setShowAgeCheck(false)} />;
-  }
-
-  return (
-    <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID || ''}>
-      <Router>
-        <Routes>
-          <Route path="/game/:code" element={<Winsite />} />
-          <Route path="/game" element={<Winsite />} />
-          <Route path="/kontakt" element={<div style={{padding: 24}}>Kontakt Seite (Platzhalter)</div>} />
-          <Route path="/datenschutz" element={<div style={{padding: 24}}>Datenschutz Seite (Platzhalter)</div>} />
-          <Route path="/impressum" element={<div style={{padding: 24}}>Impressum Seite (Platzhalter)</div>} />
-          <Route path="/" element={
-            <div style={{
-              width: '100vw',
-              minHeight: '100vh',
-              background: '#EDD1B2',
-              display: 'flex',
-              justifyContent: 'center',
-              alignItems: 'center',
-            }}>
-              <div className="mobile-container" style={{
-                width: 375,
-                minHeight: '100vh',
-                background: '#EDD1B2',
-                boxShadow: '0 0 24px rgba(0,0,0,0.08)',
-                borderRadius: 16,
-                position: 'relative',
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'flex-start',
-                alignItems: 'center',
-                overflow: 'hidden',
-              }}>
-                {renderGamePage()}
-                <BurgerMenu onShowLoginRegister={handleShowLoginRegister} />
-                {showRegisterOverlay && !registerOverlayDismissed && (
-                  <RegisterOverlay
-                    atzencoins={atzencoins}
-                    onClose={handleRegisterOverlayClose}
-                  />
-                )}
-                {/* Mobile container style for mobile look */}
-                <style>{`
-                  .mobile-container {
-                    box-sizing: border-box;
-                    max-width: 100vw;
-                    margin: 0 auto;
-                  }
-                `}</style>
-              </div>
-            </div>
-          } />
-        </Routes>
-      </Router>
-    </GoogleOAuthProvider>
-  );
-};
+}
 
 export default App;
