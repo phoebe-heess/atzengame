@@ -1,5 +1,4 @@
 import React from 'react';
-import { useGoogleLogin } from '@react-oauth/google';
 import { authService } from '../services/auth';
 
 const GREEN = '#03855c';
@@ -16,28 +15,31 @@ interface SocialAuthProps {
 }
 
 function SocialAuth({ atzencoins, onSuccess, onError, buttonStyle }: SocialAuthProps) {
-  const login = useGoogleLogin({
-    onSuccess: async (tokenResponse) => {
-      try {
-        // Only send the access token, as required by the backend
-        await authService.registerWithGoogle(tokenResponse.access_token);
-        onSuccess();
-      } catch (error: any) {
-        console.error('Google login onSuccess error:', error);
-        onError(error.message || 'Google authentication failed');
-      }
-    },
-    onError: (error) => {
-      console.error('Google login onError:', error);
-      onError('Google authentication failed');
-    },
-    scope: 'openid email profile',
-  });
+  const handleGoogleLogin = () => {
+    try {
+      // Redirect to backend for Google OAuth
+      authService.loginWithGoogle();
+      // Note: onSuccess will be called when user returns from OAuth flow
+    } catch (error: any) {
+      console.error('Google login error:', error);
+      onError(error.message || 'Google authentication failed');
+    }
+  };
+
+  const handleMockLogin = async () => {
+    try {
+      await authService.mockLogin();
+      onSuccess();
+    } catch (error: any) {
+      console.error('Mock login error:', error);
+      onError(error.message || 'Mock authentication failed');
+    }
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
       <button
-        onClick={() => login()}
+        onClick={handleGoogleLogin}
         style={{
           background: GOOGLE_BLUE,
           color: BEIGE,
@@ -66,10 +68,36 @@ function SocialAuth({ atzencoins, onSuccess, onError, buttonStyle }: SocialAuthP
             <path d="M3.545 7.545l2.844 2.086c.641-1.211 1.953-2.617 4.016-2.617 1.172 0 2.25.453 3.078 1.344l2.312-2.25c-1.344-1.25-3.047-2.016-5.391-2.016-3.375 0-6.117 2.797-6.117 6.25 0 1.016.219 1.984.609 2.797z" fill="#fbbc05"/>
             <path d="M12.023 22c2.484 0 4.547-.828 6.047-2.25l-2.844-2.297c-.797.547-1.844.922-3.203.922-2.484 0-4.594-1.672-5.344-3.953l-2.844 2.203c1.547 3.047 4.844 5.375 8.188 5.375z" fill="#34a853"/>
             <path d="M21.805 10.023h-9.765v3.954h5.617c-.242 1.23-1.484 3.617-5.617 3.617-3.375 0-6.117-2.797-6.117-6.25 0-1.016.219-1.984.609-2.797l2.844 2.086c.75 2.281 2.859 3.953 5.344 3.953 1.359 0 2.406-.375 3.203-.922l2.844 2.297c-1.5 1.422-3.563 2.25-6.047 2.25z" fill="#4285f4"/>
-            <path d="M3.545 7.545l2.844 2.086c.641-1.211 1.953-2.617 4.016-2.617 1.172 0 2.25.453 3.078 1.344l2.312-2.25c-1.344-1.25-3.047-2.016-5.391-2.016-3.375 0-6.117 2.797-6.117 6.25 0 1.016.219-1.984.609-2.797z" fill="#ea4335"/>
+            <path d="M3.545 7.545l2.844 2.086c.641-1.211 1.953-2.617 4.016-2.617 1.172 0 2.25.453 3.078 1.344l2.312-2.25c-1.344-1.25-3.047-2.016-5.391-2.016-3.375 0-6.117 2.797-6.117 6.25 0 1.016.219 1.984.609 2.797z" fill="#ea4335"/>
           </g>
         </svg>
         Weiter mit Google
+      </button>
+      
+      {/* Temporary mock login button for testing */}
+      <button
+        onClick={handleMockLogin}
+        style={{
+          background: ORANGE,
+          color: BEIGE,
+          fontFamily: 'Montserrat, Arial, sans-serif',
+          fontWeight: 600,
+          fontSize: '17px',
+          borderRadius: '10px',
+          padding: '14px',
+          width: '100%',
+          boxShadow: '0 2px 8px #0001',
+          transition: 'background 0.2s',
+          border: 'none',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '10px',
+          cursor: 'pointer',
+          ...buttonStyle,
+        }}
+      >
+        🧪 Test Login (Mock)
       </button>
     </div>
   );

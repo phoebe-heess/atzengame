@@ -1,23 +1,41 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { GoogleOAuthProvider } from '@react-oauth/google';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import Winsite from './pages/Winsite';
 import AgeCheckModal from './components/AgeCheckModal';
+import BurgerMenu from './components/BurgerMenu';
+import Register from './pages/Register';
 import Kontakt from './pages/Kontakt';
 import Datenschutz from './pages/Datenschutz';
 import Impressum from './pages/Impressum';
-import { biconomyService } from './services/BiconomyService';
-import { PlusOne, Point } from './types';
-import atzengoldLogo from './assets/atzengold-logo.png';
-import chainTurn from './assets/chain_turn.png';
 import RegisterOverlay from './components/RegisterOverlay';
-import BurgerMenu from './components/BurgerMenu';
+import Scoreboard from './pages/Scoreboard';
+import BoosterModal from './components/BoosterModal';
+import { boosterService, Booster } from './services/boosterService';
 import { motion, AnimatePresence } from 'framer-motion';
 
+const GREEN = '#03855c';
 const ORANGE = '#d69229';
+const BG_COLOR = '#EDD1B2';
 
-const App: React.FC = () => {
-  // FORCE age check modal for testing
-  const [showAgeCheck, setShowAgeCheck] = useState(true);
+function App() {
+  const [showAgeCheck, setShowAgeCheck] = useState(false);
+  const [showLoginRegister, setShowLoginRegister] = useState(false);
+  const [atzencoins, setAtzencoins] = useState<number>(0);
+  const [showBoosterModal, setShowBoosterModal] = useState(false);
+  const [currentBooster, setCurrentBooster] = useState<Booster | null>(null);
+  const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
+
+  useEffect(() => {
+    const ageChecked = localStorage.getItem('ageChecked');
+    const dsgvoAccepted = localStorage.getItem('dsgvoAccepted');
+    setShowAgeCheck(!(ageChecked === 'true' && dsgvoAccepted === 'true'));
+  }, []);
+
+  useEffect(() => {
+    // Clear expired boosters on app load
+    boosterService.clearExpiredBoosters();
+  }, []);
 
   const handleAgeCheckConfirm = (allowed: boolean) => {
     if (allowed) {
@@ -27,289 +45,86 @@ const App: React.FC = () => {
     }
   };
 
-  if (showAgeCheck) {
-    return (
-      <div className="app-container">
-        <div className="mobile-container">
-          <AgeCheckModal onConfirm={handleAgeCheckConfirm} />
-        </div>
-      </div>
-    );
-  }
+  const handleBoosterActivated = () => {
+    if (currentBooster) {
+      boosterService.activateBooster(currentBooster);
+      setCurrentBooster(null);
+      setShowBoosterModal(false);
+    }
+  };
+
+  const handleBoosterWon = (booster: Booster) => {
+    setCurrentBooster(booster);
+    setShowBoosterModal(true);
+  };
 
   return (
-    <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID || ''}>
-      <div className="app-container">
-        <div className="mobile-container" style={{ position: 'relative' }}>
-          <Router>
+    <GoogleOAuthProvider clientId={googleClientId}>
+      <BrowserRouter>
+        <div className="mobile-container" style={{ position: 'relative', minHeight: '100vh' }}>
+          {showAgeCheck && <AgeCheckModal onConfirm={handleAgeCheckConfirm} />}
+          {!showAgeCheck && (
             <Routes>
-              <Route path="/game/:code" element={<GamePage />} />
-              <Route path="/game" element={<GamePage />} />
+              <Route path="/" element={<Winsite atzencoins={atzencoins} setAtzencoins={setAtzencoins} />} />
+              <Route path="/game" element={<Winsite atzencoins={atzencoins} setAtzencoins={setAtzencoins} />} />
+              <Route path="/game/:code" element={<Winsite atzencoins={atzencoins} setAtzencoins={setAtzencoins} />} />
+              <Route path="/register" element={<Register />} />
               <Route path="/kontakt" element={<Kontakt />} />
               <Route path="/datenschutz" element={<Datenschutz />} />
               <Route path="/impressum" element={<Impressum />} />
-              <Route path="/" element={<GamePage />} />
+              <Route path="/scoreboard" element={<Scoreboard atzencoins={atzencoins} />} />
             </Routes>
-          </Router>
-        </div>
-      </div>
-    </GoogleOAuthProvider>
-  );
-};
+          )}
+          <BurgerMenu onShowLoginRegister={() => setShowLoginRegister(true)} />
+          {showLoginRegister && (
+            <RegisterOverlay atzencoins={atzencoins} onClose={() => setShowLoginRegister(false)} mode="menu" />
+          )}
 
-// --- GamePage component ---
-export function GamePage() {
-  const [atzencoins, setAtzencoins] = useState(0);
-  const [rotation, setRotation] = useState(0);
-  const [plusOnes, setPlusOnes] = useState<PlusOne[]>([]);
-  const [isDragging, setIsDragging] = useState(false);
-  const [showRegisterOverlay, setShowRegisterOverlay] = useState(false);
-  const [showLoginOverlay, setShowLoginOverlay] = useState(false);
-  const [registerOverlayDismissed, setRegisterOverlayDismissed] = useState(() => {
-    return localStorage.getItem('registerOverlayDismissed') === 'true';
-  });
-  const wheelRef = useRef<HTMLDivElement>(null);
-  const lastPoint = useRef<Point | null>(null);
-  const plusOneCounter = useRef(0);
-  const lastRotation = useRef(0);
-  const maxPoints = 560;
-  const progress = Math.max(0, Math.min(1, atzencoins / maxPoints));
-  // --- Hour tracking for +1s ---
-  const lastHour = React.useRef<number | null>(null);
-  const WHEEL_SIZE = 400; // px
-  const WHEEL_RADIUS = WHEEL_SIZE / 2;
-  const WHEEL_CENTER = { x: WHEEL_RADIUS, y: WHEEL_RADIUS };
-  const wheelMargin = 200;
-  const barMargin = 8;
+          {/* Booster Modal */}
+          <AnimatePresence>
+            {showBoosterModal && currentBooster && (
+              <BoosterModal
+                booster={currentBooster}
+                onClose={() => {
+                  setShowBoosterModal(false);
+                  setCurrentBooster(null);
+                }}
+                onActivate={handleBoosterActivated}
+              />
+            )}
+          </AnimatePresence>
 
-  // +1 animation logic for hour positions
-  const addPlusOneAtHour = (hour: number) => {
-    // hour: 0 = 12, 1 = 1, ..., 11 = 11
-    const angleDeg = (hour * 30) - 90; // 0h = -90deg (top)
-    const angleRad = (angleDeg * Math.PI) / 180;
-    const rimRadius = WHEEL_RADIUS * 0.92; // slightly inside the rim
-    const x = WHEEL_CENTER.x + rimRadius * Math.cos(angleRad);
-    const y = WHEEL_CENTER.y + rimRadius * Math.sin(angleRad);
-    const id = plusOneCounter.current++;
-    setPlusOnes(prev => [...prev, { id, x, y }]);
-    setTimeout(() => {
-      setPlusOnes(prev => prev.filter(p => p.id !== id));
-    }, 2000);
-  };
-
-  // Wheel logic (unchanged, but no wallet logic)
-  const handleMouseDown = (e: React.MouseEvent) => {
-    setIsDragging(true);
-    lastPoint.current = { x: e.clientX, y: e.clientY };
-    lastRotation.current = rotation;
-  };
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (!isDragging || !lastPoint.current || !wheelRef.current) return;
-    const currentPoint = { x: e.clientX, y: e.clientY };
-    const wheelRect = wheelRef.current.getBoundingClientRect();
-    const wheelCenter = {
-      x: wheelRect.left + wheelRect.width / 2,
-      y: wheelRect.top + wheelRect.height / 2,
-    };
-    const lastAngle = Math.atan2(
-      lastPoint.current.y - wheelCenter.y,
-      lastPoint.current.x - wheelCenter.x
-    );
-    const currentAngle = Math.atan2(
-      currentPoint.y - wheelCenter.y,
-      currentPoint.x - wheelCenter.x
-    );
-    let angleDiff = currentAngle - lastAngle;
-    if (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
-    if (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
-    const newRotation = rotation + (angleDiff * 180) / Math.PI;
-    setRotation(newRotation);
-    // --- +1 at hour positions ---
-    const normalizedRotation = ((newRotation % 360) + 360) % 360;
-    const currentHour = Math.floor(((normalizedRotation + 360) % 360) / 30) % 12;
-    if (lastHour.current === null || currentHour !== lastHour.current) {
-      if (atzencoins < maxPoints) {
-        setAtzencoins(prev => Math.min(prev + 1, maxPoints));
-        addPlusOneAtHour(currentHour);
-        lastRotation.current = newRotation;
-      }
-      lastHour.current = currentHour;
-    }
-    lastPoint.current = currentPoint;
-  };
-  const handleMouseUp = () => {
-    setIsDragging(false);
-    lastPoint.current = null;
-    lastHour.current = null;
-    if (atzencoins >= maxPoints) {
-      setShowRegisterOverlay(true);
-    }
-  };
-  const handleTouchStart = (e: React.TouchEvent) => {
-    const touch = e.touches[0];
-    setIsDragging(true);
-    lastPoint.current = { x: touch.clientX, y: touch.clientY };
-    lastRotation.current = rotation;
-  };
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (!isDragging || !lastPoint.current || !wheelRef.current) return;
-    const touch = e.touches[0];
-    const currentPoint = { x: touch.clientX, y: touch.clientY };
-    const wheelRect = wheelRef.current.getBoundingClientRect();
-    const wheelCenter = {
-      x: wheelRect.left + wheelRect.width / 2,
-      y: wheelRect.top + wheelRect.height / 2,
-    };
-    const lastAngle = Math.atan2(
-      lastPoint.current.y - wheelCenter.y,
-      lastPoint.current.x - wheelCenter.x
-    );
-    const currentAngle = Math.atan2(
-      currentPoint.y - wheelCenter.y,
-      currentPoint.x - wheelCenter.x
-    );
-    let angleDiff = currentAngle - lastAngle;
-    if (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
-    if (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
-    const newRotation = rotation + (angleDiff * 180) / Math.PI;
-    setRotation(newRotation);
-    // --- +1 at hour positions ---
-    const normalizedRotation = ((newRotation % 360) + 360) % 360;
-    const currentHour = Math.floor(((normalizedRotation + 360) % 360) / 30) % 12;
-    if (lastHour.current === null || currentHour !== lastHour.current) {
-      if (atzencoins < maxPoints) {
-        setAtzencoins(prev => Math.min(prev + 1, maxPoints));
-        addPlusOneAtHour(currentHour);
-        lastRotation.current = newRotation;
-      }
-      lastHour.current = currentHour;
-    }
-    lastPoint.current = currentPoint;
-  };
-  const handleTouchEnd = () => {
-    setIsDragging(false);
-    lastPoint.current = null;
-    lastHour.current = null;
-    if (atzencoins >= maxPoints) {
-      setShowRegisterOverlay(true);
-    }
-  };
-  const handleRegisterOverlayClose = () => {
-    setShowRegisterOverlay(false);
-    setRegisterOverlayDismissed(true);
-    localStorage.setItem('registerOverlayDismissed', 'true');
-  };
-  const handleShowLoginRegister = () => {
-    setShowLoginOverlay(true);
-  };
-
-  return (
-    <div className="game-page">
-      {/* Atzencoins Counter - copied from Atzenwin */}
-      <div style={{ 
-        display: 'flex', 
-        alignItems: 'center', 
-        justifyContent: 'center', 
-        width: '100%', 
-        position: 'absolute', 
-        top: 16, 
-        left: 0, 
-        right: 0, 
-        zIndex: 100 
-      }}>
-        <div style={{ 
-          background: '#03855c', 
-          color: '#EDD1B2', 
-          fontFamily: 'Montserrat, monospace', 
-          fontWeight: 700, 
-          fontSize: 28, 
-          borderRadius: 18, 
-          padding: '8px 18px', 
-          minWidth: 120, 
-          height: 56, 
-          display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: 'center', 
-          boxShadow: '0 2px 8px #0001' 
-        }}>
-          Atzencoins: {atzencoins}
-        </div>
-      </div>
-      <div className="wheel-section" style={{ marginTop: wheelMargin }}>
-        <div
-          ref={wheelRef}
-          className="wheel-container"
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
-          onTouchStart={handleTouchStart}
-          onTouchMove={handleTouchMove}
-          onTouchEnd={handleTouchEnd}
-        >
-          <img
-            src={chainTurn}
-            alt="Chain Turn"
-            className="chain-turn"
+          {/* Instagram Button (from Atzenwin) */}
+          <button
+            aria-label="Instagram"
+            tabIndex={-1}
+            onMouseDown={e => e.preventDefault()}
+            onTouchStart={e => e.preventDefault()}
             style={{
-              transform: `rotate(${rotation}deg)`,
-              transition: isDragging ? 'none' : 'transform 0.3s ease-out',
-            }}
-          />
-          <img
-            src={atzengoldLogo}
-            alt="Atzengold Logo"
-            className="atzengold-logo"
-          />
-        </div>
-      </div>
-      {/* Progress Bar - move together with wheel */}
-      <div className="progress-bar" style={{ marginTop: barMargin }}>
-        <div
-          className="progress-fill"
-          style={{ width: `${(1 - progress) * 100}%` }}
-        />
-      </div>
-      {/* +1 Animations */}
-      <AnimatePresence>
-        {plusOnes.map(plusOne => (
-          <motion.div
-            key={plusOne.id}
-            className="plus-one"
-            initial={{ opacity: 1, y: 0, scale: 1 }}
-            animate={{ opacity: 0, y: -300, scale: 1.2 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 2 }}
-            style={{
-              left: plusOne.x,
-              top: plusOne.y,
-              color: ORANGE,
-              fontSize: 32,
-              fontWeight: 'bold',
               position: 'absolute',
-              pointerEvents: 'none',
-              zIndex: 10,
+              bottom: 20,
+              right: 24,
+              background: BG_COLOR,
+              color: GREEN,
+              borderRadius: '50%',
+              width: 56,
+              height: 56,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              border: 'none',
+              zIndex: 2000,
+              cursor: 'pointer',
             }}
+            onClick={() => window.open('https://www.instagram.com/atzengold/', '_blank')}
           >
-            +1
-          </motion.div>
-        ))}
-      </AnimatePresence>
-      <BurgerMenu onShowLoginRegister={handleShowLoginRegister} />
-      {showRegisterOverlay && !registerOverlayDismissed && (
-        <RegisterOverlay
-          atzencoins={atzencoins}
-          onClose={handleRegisterOverlayClose}
-        />
-      )}
-      {showLoginOverlay && (
-        <RegisterOverlay
-          atzencoins={atzencoins}
-          onClose={() => setShowLoginOverlay(false)}
-          mode="menu"
-        />
-      )}
-    </div>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z" fill={GREEN}/>
+            </svg>
+          </button>
+        </div>
+      </BrowserRouter>
+    </GoogleOAuthProvider>
   );
 }
 

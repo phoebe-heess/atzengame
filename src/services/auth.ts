@@ -1,6 +1,4 @@
-import axios from 'axios';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
+export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
 
 declare global {
   interface ImportMetaEnv {
@@ -13,65 +11,67 @@ declare global {
   }
 }
 
-export interface RegisterData {
+export interface User {
+  id: string;
   email: string;
-  password: string;
-  atzencoins: number;
+  name: string;
+  picture?: string;
 }
 
-export interface AuthResponse {
-  token: string;
-  user: {
-    id: string;
-    email: string;
-    atzencoins: number;
-  };
+export interface AuthStatus {
+  authenticated: boolean;
+  user: User | null;
 }
 
 export const authService = {
-  async registerWithEmail(data: RegisterData): Promise<AuthResponse> {
+
+  // Initiate Google OAuth login
+  loginWithGoogle() {
+    window.location.href = `${API_URL}/auth/google`;
+  },
+
+  // Mock login for testing (temporary)
+  async mockLogin(): Promise<void> {
     try {
-      const response = await axios.post(`${API_URL}/auth/register`, data);
-      if (response.data.token) {
-        localStorage.setItem('user', JSON.stringify(response.data));
-      }
-      return response.data;
+      const response = await fetch(`${API_URL}/auth/mock-login`, {
+        credentials: 'include'
+      });
+      const data = await response.json();
+      console.log('Mock login response:', data);
     } catch (error) {
-      throw error;
+      console.error('Mock login error:', error);
     }
   },
 
-  async registerWithGoogle(token: string): Promise<AuthResponse> {
+  // Check authentication status
+  async checkAuthStatus(): Promise<AuthStatus> {
     try {
-      const response = await axios.post(`${API_URL}/auth/google`, { token });
-      if (response.data.token) {
-        localStorage.setItem('user', JSON.stringify(response.data));
-      }
-      return response.data;
+      const response = await fetch(`${API_URL}/auth/status`, {
+        credentials: 'include'
+      });
+      return await response.json();
     } catch (error) {
-      throw error;
+      console.error('Error checking auth status:', error);
+      return { authenticated: false, user: null };
     }
   },
 
-  async registerWithApple(token: string): Promise<AuthResponse> {
+  // Logout user
+  async logout(): Promise<void> {
     try {
-      const response = await axios.post(`${API_URL}/auth/apple`, { token });
-      if (response.data.token) {
-        localStorage.setItem('user', JSON.stringify(response.data));
-      }
-      return response.data;
+      await fetch(`${API_URL}/auth/logout`, {
+        credentials: 'include'
+      });
     } catch (error) {
-      throw error;
+      console.error('Error during logout:', error);
     }
   },
 
-  logout() {
-    localStorage.removeItem('user');
-  },
-
-  getCurrentUser() {
-    const userStr = localStorage.getItem('user');
-    if (userStr) return JSON.parse(userStr);
+  // Get current user from session (deprecated - use checkAuthStatus instead)
+  getCurrentUser(): User | null {
+    // This is now handled by the backend session
+    // We'll keep this for backward compatibility but it won't work
+    console.warn('getCurrentUser() is deprecated. Use checkAuthStatus() instead.');
     return null;
   }
 }; 

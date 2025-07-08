@@ -1,7 +1,8 @@
-import React, { useState, useRef, useLayoutEffect } from 'react';
+import React, { useState, useRef, useLayoutEffect, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
+import { authService, AuthStatus } from '../services/auth';
 
 const GREEN = '#03855c';
 const ORANGE = '#d69229';
@@ -25,10 +26,46 @@ interface BurgerMenuProps {
 export default function BurgerMenu({ onShowLoginRegister }: BurgerMenuProps) {
   const [open, setOpen] = useState(false);
   const [containerRect, setContainerRect] = useState<ContainerRect>(null);
+  const [authStatus, setAuthStatus] = useState<AuthStatus>({ authenticated: false, user: null });
   const navigate = useNavigate();
   const buttonContainerRef = useRef(null);
 
-  const menuItems = [
+  // Check authentication status when component mounts and when menu opens
+  useEffect(() => {
+    const checkAuth = async () => {
+      const status = await authService.checkAuthStatus();
+      setAuthStatus(status);
+    };
+    
+    checkAuth();
+    
+    // Check auth status every 5 seconds to keep it updated
+    const interval = setInterval(checkAuth, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Prevent background scroll when menu is open
+  useEffect(() => {
+    if (open) {
+      const originalOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.overflow = originalOverflow;
+      };
+    }
+  }, [open]);
+
+  const menuItems = authStatus.authenticated ? [
+    { label: 'Profil', path: '/scoreboard' },
+    { label: 'Abmelden', action: async () => { 
+      await authService.logout(); 
+      setAuthStatus({ authenticated: false, user: null });
+      setOpen(false);
+    }},
+    { label: 'Kontakt', path: '/kontakt' },
+    { label: 'Datenschutz', path: '/datenschutz' },
+    { label: 'Impressum', path: '/impressum' },
+  ] : [
     { label: 'Login/Register', action: () => { setOpen(false); onShowLoginRegister(); } },
     { label: 'Kontakt', path: '/kontakt' },
     { label: 'Datenschutz', path: '/datenschutz' },

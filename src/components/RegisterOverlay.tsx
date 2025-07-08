@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import EmailRegisterForm from './EmailRegisterForm';
 import EmailLoginForm from './EmailLoginForm';
 import SocialAuth from './SocialAuth';
+import { useNavigate } from 'react-router-dom';
 
 const BEIGE = '#EDD1B2';
 const GREEN = '#03855c';
@@ -19,6 +20,7 @@ export default function RegisterOverlay({ atzencoins, onClose, mode }: RegisterO
   const [showEmailForm, setShowEmailForm] = useState(false);
   const [isLogin, setIsLogin] = useState(false);
   const [error, setError] = useState('');
+  const navigate = useNavigate();
 
   const handleEmailRegister = () => {
     setIsLogin(false);
@@ -31,7 +33,18 @@ export default function RegisterOverlay({ atzencoins, onClose, mode }: RegisterO
   };
 
   const handleSuccess = () => {
+    // Update atzencoins in localStorage user object if present
+    const userStr = localStorage.getItem('user');
+    if (userStr) {
+      const userObj = JSON.parse(userStr);
+      if (typeof atzencoins === 'number') {
+        userObj.user.atzencoins = atzencoins;
+        localStorage.setItem('user', JSON.stringify(userObj));
+        console.log('Updated user atzencoins in localStorage:', atzencoins);
+      }
+    }
     onClose();
+    navigate('/scoreboard');
   };
 
   const handleError = (errorMessage: string) => {
