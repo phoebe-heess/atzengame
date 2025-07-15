@@ -30,21 +30,19 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
   const [showClaimOverlay, setShowClaimOverlay] = useState<boolean>(false);
   const [claimPoints, setClaimPoints] = useState<number>(0);
   const [showGoldWinOverlay, setShowGoldWinOverlay] = useState<boolean>(false);
+  
   const wheelRef = useRef<HTMLDivElement | null>(null);
   const lastPoint = useRef<{ x: number; y: number } | null>(null);
   const plusOneCounter = useRef<number>(0);
-  const lastRotation = useRef<number>(0);
+  const lastPlusOneAngle = useRef<number>(0);
+  const startAngleRef = useRef<number | null>(null);
+  const startRotationRef = useRef<number>(0);
+  const isMouseDown = useRef<boolean>(false);
+  
   const maxPoints = 12;
   const progress = Math.max(0, Math.min(1, atzencoins / maxPoints));
-  const lastHour = useRef<number | null>(null);
-  const WHEEL_SIZE = 400;
-  const WHEEL_RADIUS = WHEEL_SIZE / 2;
-  const WHEEL_CENTER = { x: WHEEL_RADIUS, y: WHEEL_RADIUS };
-  const wheelMargin = 200;
-  const barMargin = 8;
-  const prevAtzencoins = useRef<number>(atzencoins);
-  const totalRotation = useRef<number>(0);
-  const lastFullSpin = useRef<number>(0);
+  const pointsPerSpin = 12;
+  const step = 90; // 90 degrees per step
 
   // Gold and booster probability (1 in 12 for testing)
   const checkGoldWin = () => {
@@ -55,13 +53,8 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
     return Math.random() < 1/12;
   };
 
-  const addPlusOneAtHour = (hour: number, count: number = 1) => {
+  const addPlusOneAtPosition = (x: number, y: number, count: number = 1) => {
     for (let i = 0; i < count; i++) {
-      const angleDeg = (hour * 30) - 90;
-      const angleRad = (angleDeg * Math.PI) / 180;
-      const rimRadius = WHEEL_RADIUS * 0.92;
-      const x = WHEEL_CENTER.x + rimRadius * Math.cos(angleRad);
-      const y = WHEEL_CENTER.y + rimRadius * Math.sin(angleRad);
       const id = plusOneCounter.current++;
       setPlusOnes(prev => [...prev, { id, x, y }]);
       setTimeout(() => {
@@ -86,7 +79,6 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
       if (!response.ok) {
         setErrorOverlay(data.error || 'An error occurred');
         setAtzencoins(0);
-        prevAtzencoins.current = 0;
         return;
       }
 
@@ -94,7 +86,6 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
       setClaimPoints(maxPoints);
       setShowClaimOverlay(true);
       setAtzencoins(0);
-      prevAtzencoins.current = 0;
 
       // Check for gold win
       if (checkGoldWin()) {
@@ -105,66 +96,85 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
       console.error('Push points error:', error);
       setErrorOverlay('Network error. Please try again.');
       setAtzencoins(0);
-      prevAtzencoins.current = 0;
     }
   };
 
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!wheelRef.current) return;
+    
+    const rect = wheelRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // Check if click is inside the logo area
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+    const dx = x - centerX;
+    const dy = y - centerY;
+    const radius = 150; // Logo radius
+    if (dx * dx + dy * dy > radius * radius) return;
+    
+    isMouseDown.current = true;
     setIsDragging(true);
     lastPoint.current = { x: e.clientX, y: e.clientY };
-    lastRotation.current = rotation;
+    
+    const angle = Math.atan2(e.clientY - (rect.top + rect.height / 2), e.clientX - (rect.left + rect.width / 2)) * 180 / Math.PI;
+    startAngleRef.current = angle;
+    startRotationRef.current = rotation;
+    lastPlusOneAngle.current = rotation;
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!isDragging || !lastPoint.current || !wheelRef.current) return;
-    const currentPoint = { x: e.clientX, y: e.clientY };
-    const wheelRect = wheelRef.current.getBoundingClientRect();
-    const wheelCenter = {
-      x: wheelRect.left + wheelRect.width / 2,
-      y: wheelRect.top + wheelRect.height / 2,
-    };
-    const lastAngle = Math.atan2(
-      lastPoint.current.y - wheelCenter.y,
-      lastPoint.current.x - wheelCenter.x
-    );
-    const currentAngle = Math.atan2(
-      currentPoint.y - wheelCenter.y,
-      currentPoint.x - wheelCenter.x
-    );
-    let angleDiff = currentAngle - lastAngle;
-    if (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
-    if (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
-    const newRotation = rotation + (angleDiff * 180) / Math.PI;
+    if (!isMouseDown.current || !wheelRef.current) return;
+    
+    const rect = wheelRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // Check if mouse is inside the logo area
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+    const dx = x - centerX;
+    const dy = y - centerY;
+    const radius = 150; // Logo radius
+    if (dx * dx + dy * dy > radius * radius) return;
+    
+    const angle = Math.atan2(e.clientY - (rect.top + rect.height / 2), e.clientX - (rect.left + rect.width / 2)) * 180 / Math.PI;
+    let delta = angle - (startAngleRef.current ?? 0);
+    if (delta > 180) delta -= 360;
+    if (delta < -180) delta += 360;
+    const newRotation = startRotationRef.current + delta;
     setRotation(newRotation);
     
-    // Track total rotation for full 360° spins
-    totalRotation.current += Math.abs(angleDiff * 180 / Math.PI);
-    
-    // Check for full 360° spin (12 points)
-    if (totalRotation.current - lastFullSpin.current >= 360) {
-      if (atzencoins < maxPoints) {
-        const pointsToAdd = Math.min(12, maxPoints - atzencoins);
-        setAtzencoins(prev => Math.min(prev + pointsToAdd, maxPoints));
-        
-        // Show 12 +1 animations (one for each point earned)
-        const boosterActive = checkBoosterWin();
-        const plusOneCount = boosterActive ? 24 : 12; // Double if booster active
-        
-        // Show multiple +1 animations around the wheel
-        for (let i = 0; i < plusOneCount; i++) {
-          const angle = (i * 360 / plusOneCount) + (newRotation % 360);
-          const hour = Math.floor(((angle % 360) + 360) % 360) / 30;
-          addPlusOneAtHour(hour, 1);
+    // Track 90-degree steps for gradual increment
+    const last = lastPlusOneAngle.current;
+    const diff = newRotation - last;
+    if (Math.abs(diff) >= step) {
+      const stepsPassed = Math.floor(Math.abs(diff) / step);
+      for (let i = 1; i <= stepsPassed; i++) {
+        if (atzencoins < maxPoints) {
+          const pointsToAdd = pointsPerSpin / 4; // 3 points per 90° step
+          setAtzencoins(prev => Math.min(prev + pointsToAdd, maxPoints));
+          
+          // Create +1 animations around the wheel
+          for (let j = 0; j < 4; j++) {
+            const angle = (j * 90) + (newRotation % 360);
+            const angleRad = (angle * Math.PI) / 180;
+            const rimRadius = 180;
+            const animX = centerX + rimRadius * Math.cos(angleRad);
+            const animY = centerY + rimRadius * Math.sin(angleRad);
+            addPlusOneAtPosition(animX, animY, 1);
+          }
         }
-        
-        lastFullSpin.current = totalRotation.current;
       }
+      lastPlusOneAngle.current = last + step * stepsPassed * Math.sign(diff);
     }
     
-    lastPoint.current = currentPoint;
+    lastPoint.current = { x: e.clientX, y: e.clientY };
   };
 
   const handleMouseUp = () => {
+    isMouseDown.current = false;
     setIsDragging(false);
     lastPoint.current = null;
     if (atzencoins >= maxPoints) {
@@ -173,63 +183,83 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
   };
 
   const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (!wheelRef.current) return;
+    
     const touch = e.touches[0];
+    const rect = wheelRef.current.getBoundingClientRect();
+    const x = touch.clientX - rect.left;
+    const y = touch.clientY - rect.top;
+    
+    // Check if touch is inside the logo area
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+    const dx = x - centerX;
+    const dy = y - centerY;
+    const radius = 150; // Logo radius
+    if (dx * dx + dy * dy > radius * radius) return;
+    
+    isMouseDown.current = true;
     setIsDragging(true);
     lastPoint.current = { x: touch.clientX, y: touch.clientY };
-    lastRotation.current = rotation;
+    
+    const angle = Math.atan2(touch.clientY - (rect.top + rect.height / 2), touch.clientX - (rect.left + rect.width / 2)) * 180 / Math.PI;
+    startAngleRef.current = angle;
+    startRotationRef.current = rotation;
+    lastPlusOneAngle.current = rotation;
   };
 
   const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (!isDragging || !lastPoint.current || !wheelRef.current) return;
+    if (!isMouseDown.current || !wheelRef.current) return;
+    
     const touch = e.touches[0];
-    const currentPoint = { x: touch.clientX, y: touch.clientY };
-    const wheelRect = wheelRef.current.getBoundingClientRect();
-    const wheelCenter = {
-      x: wheelRect.left + wheelRect.width / 2,
-      y: wheelRect.top + wheelRect.height / 2,
-    };
-    const lastAngle = Math.atan2(
-      lastPoint.current.y - wheelCenter.y,
-      lastPoint.current.x - wheelCenter.x
-    );
-    const currentAngle = Math.atan2(
-      currentPoint.y - wheelCenter.y,
-      currentPoint.x - wheelCenter.x
-    );
-    let angleDiff = currentAngle - lastAngle;
-    if (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
-    if (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
-    const newRotation = rotation + (angleDiff * 180) / Math.PI;
+    const rect = wheelRef.current.getBoundingClientRect();
+    const x = touch.clientX - rect.left;
+    const y = touch.clientY - rect.top;
+    
+    // Check if touch is inside the logo area
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+    const dx = x - centerX;
+    const dy = y - centerY;
+    const radius = 150; // Logo radius
+    if (dx * dx + dy * dy > radius * radius) return;
+    
+    const angle = Math.atan2(touch.clientY - (rect.top + rect.height / 2), touch.clientX - (rect.left + rect.width / 2)) * 180 / Math.PI;
+    let delta = angle - (startAngleRef.current ?? 0);
+    if (delta > 180) delta -= 360;
+    if (delta < -180) delta += 360;
+    const newRotation = startRotationRef.current + delta;
     setRotation(newRotation);
     
-    // Track total rotation for full 360° spins
-    totalRotation.current += Math.abs(angleDiff * 180 / Math.PI);
-    
-    // Check for full 360° spin (12 points)
-    if (totalRotation.current - lastFullSpin.current >= 360) {
-      if (atzencoins < maxPoints) {
-        const pointsToAdd = Math.min(12, maxPoints - atzencoins);
-        setAtzencoins(prev => Math.min(prev + pointsToAdd, maxPoints));
-        
-        // Show 12 +1 animations (one for each point earned)
-        const boosterActive = checkBoosterWin();
-        const plusOneCount = boosterActive ? 24 : 12; // Double if booster active
-        
-        // Show multiple +1 animations around the wheel
-        for (let i = 0; i < plusOneCount; i++) {
-          const angle = (i * 360 / plusOneCount) + (newRotation % 360);
-          const hour = Math.floor(((angle % 360) + 360) % 360) / 30;
-          addPlusOneAtHour(hour, 1);
+    // Track 90-degree steps for gradual increment
+    const last = lastPlusOneAngle.current;
+    const diff = newRotation - last;
+    if (Math.abs(diff) >= step) {
+      const stepsPassed = Math.floor(Math.abs(diff) / step);
+      for (let i = 1; i <= stepsPassed; i++) {
+        if (atzencoins < maxPoints) {
+          const pointsToAdd = pointsPerSpin / 4; // 3 points per 90° step
+          setAtzencoins(prev => Math.min(prev + pointsToAdd, maxPoints));
+          
+          // Create +1 animations around the wheel
+          for (let j = 0; j < 4; j++) {
+            const angle = (j * 90) + (newRotation % 360);
+            const angleRad = (angle * Math.PI) / 180;
+            const rimRadius = 180;
+            const animX = centerX + rimRadius * Math.cos(angleRad);
+            const animY = centerY + rimRadius * Math.sin(angleRad);
+            addPlusOneAtPosition(animX, animY, 1);
+          }
         }
-        
-        lastFullSpin.current = totalRotation.current;
       }
+      lastPlusOneAngle.current = last + step * stepsPassed * Math.sign(diff);
     }
     
-    lastPoint.current = currentPoint;
+    lastPoint.current = { x: touch.clientX, y: touch.clientY };
   };
 
   const handleTouchEnd = () => {
+    isMouseDown.current = false;
     setIsDragging(false);
     lastPoint.current = null;
     if (atzencoins >= maxPoints) {
@@ -249,10 +279,7 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
 
   // Handle claim when bar is full
   useEffect(() => {
-    if (
-      prevAtzencoins.current < maxPoints &&
-      atzencoins === maxPoints
-    ) {
+    if (atzencoins >= maxPoints) {
       // Call backend claim endpoint
       fetch('/api/claim', {
         method: 'POST',
@@ -268,7 +295,6 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
           } else {
             // Success - reset the bar and show success message
             setAtzencoins(0);
-            prevAtzencoins.current = 0;
             // TODO: Show success overlay with confetti
           }
         })
@@ -276,8 +302,6 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
           setErrorOverlay('Network error. Please try again.');
           // DON'T reset the bar on network error
         });
-    } else {
-      prevAtzencoins.current = atzencoins;
     }
   }, [atzencoins, maxPoints]);
 
@@ -323,7 +347,7 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
           Atzencoins: {atzencoins}
         </div>
       </div>
-      <div className="wheel-section" style={{ marginTop: wheelMargin }}>
+      <div className="wheel-section" style={{ marginTop: 200 }}>
         <div
           ref={wheelRef}
           className="wheel-container"
@@ -351,7 +375,7 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
           />
         </div>
       </div>
-      <div className="progress-bar" style={{ marginTop: barMargin }}>
+      <div className="progress-bar" style={{ marginTop: 8 }}>
         <div
           className="progress-fill"
           style={{ width: `${(1 - progress) * 100}%` }}
@@ -381,6 +405,7 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
           </motion.div>
         ))}
       </AnimatePresence>
+      {/* Burger Menu */}
       <BurgerMenu onShowLoginRegister={handleShowLoginRegister} />
       {showRegisterOverlay && !registerOverlayDismissed && (
         <RegisterOverlay
