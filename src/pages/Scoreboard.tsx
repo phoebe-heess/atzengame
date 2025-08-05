@@ -1,89 +1,153 @@
-import React from 'react';
-import PageLayout from '../components/PageLayout';
-import fourGif from '../assets/4.gif';
-import goldbarPng from '../assets/goldbar.png';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
+import atzengoldLogo from '../assets/atzengold-logo.png';
+import BurgerMenu from '../components/BurgerMenu';
+import { pointsService } from '../services/pointsService';
 
-const GREEN = '#03855c';
-const ORANGE = '#d69229';
-const RED = '#d92a2a';
-const BG_COLOR = '#EDD1B2';
-
-interface ScoreboardProps {
-  atzencoins: number;
+interface ScoreboardEntry {
+  userId: string;
+  points: number;
+  pendingPoints?: number;
+  totalPoints?: number;
+  walletAddress?: string;
 }
 
-export default function Scoreboard({ atzencoins }: ScoreboardProps) {
-  const navigate = useNavigate();
-  return (
-    <PageLayout title="PROFIL" onClose={() => navigate('/')} hideCloseButton={true}>
-      <div style={{ width: '100%', maxWidth: 430, margin: '0 auto', paddingBottom: 100 }}>
-        {/* Atzencoins Card */}
-        <div style={{
-          width: '100%',
-          maxWidth: 340,
-          margin: '0 auto 28px auto',
-          background: BG_COLOR,
-          borderRadius: 16,
-          boxShadow: '0 2px 8px #0001',
-          padding: '24px 0 18px 0',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          fontFamily: 'monospace',
-        }}>
-          <div style={{ color: GREEN, fontWeight: 700, fontSize: 22, marginBottom: 10, letterSpacing: 1 }}>Atzencoins</div>
-          <div style={{ background: GREEN, color: BG_COLOR, fontWeight: 700, fontSize: 28, borderRadius: 18, padding: '8px 18px', minWidth: 120, height: 56, marginBottom: 4, boxShadow: '0 2px 8px #0001', fontFamily: 'monospace', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{atzencoins}</div>
-        </div>
+export default function Scoreboard() {
+  const [scoreboard, setScoreboard] = useState<ScoreboardEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [copiedAddress, setCopiedAddress] = useState<string | null>(null);
 
-        {/* Collectibles Card */}
-        <div style={{
-          width: '100%',
-          maxWidth: 340,
-          margin: '0 auto 28px auto',
-          background: BG_COLOR,
-          borderRadius: 16,
-          boxShadow: '0 2px 8px #0001',
-          padding: '24px 0 18px 0',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          fontFamily: 'monospace',
-        }}>
-          <div style={{ color: GREEN, fontWeight: 700, fontSize: 22, marginBottom: 18, letterSpacing: 1 }}>Sammelobjekte</div>
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 18 }}>
-            {[0, 1, 2].map(i => (
-              <div key={i} style={{ position: 'relative', width: 56, height: 72, filter: 'grayscale(1)', opacity: 0.5, background: BG_COLOR, borderRadius: 8, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-                <img src={fourGif} alt="Collectible" style={{ width: 48, height: 64, objectFit: 'contain', borderRadius: 6, marginBottom: 4 }} />
-                <span style={{ position: 'absolute', top: 8, left: 0, right: 0, textAlign: 'center', color: RED, fontWeight: 900, fontSize: 18, letterSpacing: 2, textShadow: '0 1px 4px #fff', fontFamily: 'monospace' }}>SOON</span>
-              </div>
+  useEffect(() => {
+    fetchScoreboard();
+  }, []);
+
+  const handleShowLoginRegister = () => {
+    // Handle login/register display
+    console.log('Show login/register');
+  };
+
+  const fetchScoreboard = async () => {
+    try {
+      setLoading(true);
+      // For demo, we'll use the test user
+      const testUser = 'test@example.com';
+      
+      // Get user points
+      const points = await pointsService.getCurrentPoints(testUser);
+      
+      // Get wallet address
+      const walletResponse = await fetch(`http://localhost:3000/api/user-wallet/${testUser}`);
+      const walletData = await walletResponse.json();
+      
+      // Get detailed points info
+      const detailedResponse = await fetch(`http://localhost:3000/api/user-points/${testUser}`);
+      const detailedData = await detailedResponse.json();
+      
+      const entry: ScoreboardEntry = {
+        userId: testUser,
+        points: detailedData.points || points,
+        pendingPoints: detailedData.pendingPoints || 0,
+        totalPoints: detailedData.totalPoints || points,
+        walletAddress: walletData.walletAddress
+      };
+      
+      setScoreboard([entry]);
+    } catch (error) {
+      console.error('Error fetching scoreboard:', error);
+      setError('Failed to load scoreboard');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const copyWalletAddress = async (address: string) => {
+    try {
+      await navigator.clipboard.writeText(address);
+      setCopiedAddress(address);
+      setTimeout(() => setCopiedAddress(null), 2000);
+    } catch (error) {
+      console.error('Failed to copy address:', error);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-orange-500 to-green-600 flex items-center justify-center">
+        <div className="text-white text-xl">Loading scoreboard...</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-orange-500 to-green-600 flex items-center justify-center">
+        <div className="text-white text-xl">{error}</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-orange-500 to-green-600">
+      <BurgerMenu onShowLoginRegister={handleShowLoginRegister} />
+      
+      <div className="container mx-auto px-4 py-8">
+        <div className="flex justify-center mb-8">
+          <img src={atzengoldLogo} alt="Atzengold Logo" className="h-16" />
+        </div>
+        
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white rounded-lg shadow-lg p-6 max-w-md mx-auto"
+        >
+          <h1 className="text-3xl font-bold text-center mb-6 text-gray-800">
+            Your Points
+          </h1>
+          
+          <div className="space-y-4">
+            {scoreboard.map((entry, index) => (
+              <motion.div
+                key={entry.userId}
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: index * 0.1 }}
+                className="text-center"
+              >
+                <div className="mb-6">
+                  <div className="text-6xl font-bold text-orange-600 mb-2">
+                    {entry.totalPoints}
+                  </div>
+                  <div className="text-lg text-gray-600">
+                    Total Points
+                  </div>
+                </div>
+                
+                {entry.walletAddress && (
+                  <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                    <div className="text-sm text-gray-600 mb-2">Your ID (for verification):</div>
+                    <div className="flex items-center space-x-2">
+                      <code className="text-xs bg-white px-2 py-1 rounded border flex-1 overflow-hidden text-ellipsis">
+                        {entry.walletAddress}
+                      </code>
+                      <button
+                        onClick={() => copyWalletAddress(entry.walletAddress!)}
+                        className="bg-orange-500 text-white px-3 py-1 rounded text-xs hover:bg-orange-600 transition-colors"
+                      >
+                        {copiedAddress === entry.walletAddress ? 'Copied!' : 'Copy'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </motion.div>
             ))}
           </div>
-        </div>
-
-        {/* Win Real Gold Card */}
-        <div style={{
-          width: '100%',
-          maxWidth: 340,
-          margin: '0 auto 12px auto',
-          background: BG_COLOR,
-          borderRadius: 16,
-          boxShadow: '0 2px 8px #0001',
-          padding: '24px 0 18px 0',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          fontFamily: 'monospace',
-        }}>
-          <div style={{ color: GREEN, fontWeight: 700, fontSize: 22, marginBottom: 18, letterSpacing: 1 }}>Echtes Gold gewinnen</div>
-          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', position: 'relative' }}>
-            <div style={{ position: 'relative', width: 56, height: 72, filter: 'grayscale(1)', opacity: 0.5, background: BG_COLOR, borderRadius: 8, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-              <img src={goldbarPng} alt="Goldbarren" style={{ width: 48, height: 32, objectFit: 'contain', borderRadius: 6, marginBottom: 4 }} />
-              <span style={{ position: 'absolute', top: 8, left: 0, right: 0, textAlign: 'center', color: RED, fontWeight: 900, fontSize: 18, letterSpacing: 2, textShadow: '0 1px 4px #fff', fontFamily: 'monospace' }}>SOON</span>
-            </div>
+          
+          <div className="mt-6 text-center text-sm text-gray-500">
+            <p>💡 Copy your ID to send for special rewards</p>
           </div>
-        </div>
+        </motion.div>
       </div>
-    </PageLayout>
+    </div>
   );
 } 

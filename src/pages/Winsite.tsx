@@ -31,6 +31,8 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
   const [showClaimOverlay, setShowClaimOverlay] = useState<boolean>(false);
   const [isClaiming, setIsClaiming] = useState<boolean>(false);
   const [sessionPoints, setSessionPoints] = useState<number>(0); // Points earned in current session
+  const [pendingPoints, setPendingPoints] = useState<number>(0); // Points waiting to be pushed to blockchain
+  const [localTotalPoints, setLocalTotalPoints] = useState<number>(0); // Total points (session + pending + blockchain)
   const [lastSpinTime, setLastSpinTime] = useState<number>(0); // Cooldown tracking
   const [isSpinning, setIsSpinning] = useState<boolean>(false); // Prevent multiple spins
   const [claimPoints, setClaimPoints] = useState<number>(0);
@@ -366,7 +368,7 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
           justifyContent: 'center', 
           boxShadow: '0 2px 8px #0001' 
         }}>
-          Atzencoins: {sessionPoints}
+          Atzencoins: {localTotalPoints}
         </div>
       </div>
       <div className="wheel-section" style={{ marginTop: 200 }}>
