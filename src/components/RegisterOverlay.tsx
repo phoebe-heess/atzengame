@@ -13,10 +13,11 @@ const BG_COLOR = '#EDD1B2';
 interface RegisterOverlayProps {
   atzencoins: number;
   onClose: () => void;
+  onSuccessfulRegistration?: () => Promise<void>;
   mode?: 'menu';
 }
 
-export default function RegisterOverlay({ atzencoins, onClose, mode }: RegisterOverlayProps) {
+export default function RegisterOverlay({ atzencoins, onClose, onSuccessfulRegistration, mode }: RegisterOverlayProps) {
   const [showEmailForm, setShowEmailForm] = useState(false);
   const [isLogin, setIsLogin] = useState(false);
   const [error, setError] = useState('');
@@ -32,7 +33,7 @@ export default function RegisterOverlay({ atzencoins, onClose, mode }: RegisterO
     setShowEmailForm(true);
   };
 
-  const handleSuccess = () => {
+  const handleSuccess = async () => {
     // Update atzencoins in localStorage user object if present
     const userStr = localStorage.getItem('user');
     if (userStr) {
@@ -43,6 +44,16 @@ export default function RegisterOverlay({ atzencoins, onClose, mode }: RegisterO
         console.log('Updated user atzencoins in localStorage:', atzencoins);
       }
     }
+    
+    // Call the onSuccessfulRegistration callback if provided
+    if (onSuccessfulRegistration) {
+      try {
+        await onSuccessfulRegistration();
+      } catch (error) {
+        console.error('Error during successful registration callback:', error);
+      }
+    }
+    
     onClose();
     navigate('/scoreboard');
   };
