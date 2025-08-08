@@ -12,9 +12,10 @@ interface PageLayoutProps {
   onOpenMenu?: () => void;
   alignTop?: boolean;
   onClose?: () => void;
+  hideCloseButton?: boolean;
 }
 
-export default function PageLayout({ children, title, onOpenMenu, alignTop, onClose }: PageLayoutProps) {
+export default function PageLayout({ children, title, onOpenMenu, alignTop, onClose, hideCloseButton }: PageLayoutProps) {
   const navigate = useNavigate();
   return (
     <motion.div
@@ -49,23 +50,25 @@ export default function PageLayout({ children, title, onOpenMenu, alignTop, onCl
         borderRadius: 2,
         margin: '16px auto 12px auto',
       }} />
-      <button
-        style={{
-          position: 'absolute',
-          top: 20,
-          right: 20,
-          background: 'transparent',
-          border: 'none',
-          color: GREEN,
-          fontWeight: 'bold',
-          fontSize: 28,
-          cursor: 'pointer',
-        }}
-        onClick={onClose ? onClose : () => navigate('/')}
-        aria-label="Close"
-      >
-        ×
-      </button>
+      {!hideCloseButton && (
+        <button
+          style={{
+            position: 'absolute',
+            top: 20,
+            right: 20,
+            background: 'transparent',
+            border: 'none',
+            color: GREEN,
+            fontWeight: 'bold',
+            fontSize: 28,
+            cursor: 'pointer',
+          }}
+          onClick={onClose ? onClose : () => navigate('/')}
+          aria-label="Close"
+        >
+          ×
+        </button>
+      )}
       <h1 style={{ 
         color: ORANGE, 
         fontWeight: 'bold', 

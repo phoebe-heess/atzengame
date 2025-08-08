@@ -1,4 +1,4 @@
-export const API_URL = import.meta.env.VITE_API_URL || '/api';
+export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
 
 declare global {
   interface ImportMetaEnv {
@@ -25,9 +25,29 @@ export interface AuthStatus {
 
 export const authService = {
 
-  // Initiate Google OAuth login
+  // Initiate Google OAuth login using popup
   loginWithGoogle() {
-    window.location.href = `${API_URL}/auth/google`;
+    const authUrl = `${API_URL}/auth/google`;
+    console.log('🔍 Opening popup to:', authUrl);
+    const popup = window.open(
+      authUrl,
+      'googleOAuth',
+      'width=500,height=600,scrollbars=yes,resizable=yes'
+    );
+    
+    // Check if popup was blocked
+    if (!popup) {
+      throw new Error('Popup blocked. Please allow popups for this site.');
+    }
+    
+    // Listen for popup close and check for success
+    const checkClosed = setInterval(() => {
+      if (popup.closed) {
+        clearInterval(checkClosed);
+        // Trigger a check for authentication status
+        window.dispatchEvent(new CustomEvent('oauth-complete'));
+      }
+    }, 1000);
   },
 
   // Mock login for testing (temporary)

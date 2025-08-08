@@ -16,7 +16,7 @@ interface ScoreboardProps {
 export default function Scoreboard({ atzencoins }: ScoreboardProps) {
   const navigate = useNavigate();
   return (
-    <PageLayout title="PROFIL" onClose={() => navigate('/')}>
+    <PageLayout title="PROFIL" onClose={() => navigate('/')} hideCloseButton={true}>
       <div style={{ width: '100%', maxWidth: 430, margin: '0 auto', paddingBottom: 100 }}>
         {/* Atzencoins Card */}
         <div style={{

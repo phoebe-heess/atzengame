@@ -16,6 +16,7 @@ interface SocialAuthProps {
 
 function SocialAuth({ atzencoins, onSuccess, onError, buttonStyle }: SocialAuthProps) {
   const handleGoogleLogin = () => {
+    console.log('🔍 Google login button clicked');
     try {
       // Redirect to backend for Google OAuth
       authService.loginWithGoogle();

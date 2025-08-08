@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import schriftGif from '../assets/schrift.gif';
+import { analyticsService } from '../services/analyticsService';
 
 const GREEN = '#03855c';
 const BG_COLOR = '#EDD1B2';
@@ -30,6 +31,8 @@ export default function AgeCheckModal({ onConfirm }: AgeCheckModalProps) {
   };
 
   const handleDSGVODecline = () => {
+    // Track age check decline
+    analyticsService.trackAgeCheck(false);
     window.location.href = '/datenschutz';
   };
 

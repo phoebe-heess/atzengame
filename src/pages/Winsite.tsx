@@ -5,7 +5,8 @@ import chainTurn from '../assets/chain_turn.png';
 import RegisterOverlay from '../components/RegisterOverlay';
 import BurgerMenu from '../components/BurgerMenu';
 import ErrorOverlay from '../components/ErrorOverlay';
-import { API_URL } from '../services/auth';
+import { pointsService } from '../services/pointsService';
+import { authService } from '../services/auth';
 
 const ORANGE = '#d69229';
 const GREEN = '#03855c';
@@ -26,23 +27,32 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
   const [registerOverlayDismissed, setRegisterOverlayDismissed] = useState<boolean>(() => {
     return localStorage.getItem('registerOverlayDismissed') === 'true';
   });
+  const [hasClaimedPoints, setHasClaimedPoints] = useState<boolean>(() => {
+    return localStorage.getItem('hasClaimedPoints') === 'true';
+  });
+  const [overlayShownThisSession, setOverlayShownThisSession] = useState<boolean>(false);
   const [errorOverlay, setErrorOverlay] = useState<string | null>(null);
+  // const [showResetConfirmation, setShowResetConfirmation] = useState(false);
   const [showClaimOverlay, setShowClaimOverlay] = useState<boolean>(false);
+  const [isClaiming, setIsClaiming] = useState<boolean>(false);
+  const [sessionPoints, setSessionPoints] = useState<number>(0); // Points earned in current session
+  const [lastSpinTime, setLastSpinTime] = useState<number>(0); // Cooldown tracking
+  const [isSpinning, setIsSpinning] = useState<boolean>(false); // Prevent multiple spins
   const [claimPoints, setClaimPoints] = useState<number>(0);
   const [showGoldWinOverlay, setShowGoldWinOverlay] = useState<boolean>(false);
-  
-  const wheelRef = useRef<HTMLDivElement | null>(null);
-  const lastPoint = useRef<{ x: number; y: number } | null>(null);
-  const plusOneCounter = useRef<number>(0);
-  const lastPlusOneAngle = useRef<number>(0);
+
+  const wheelRef = useRef<HTMLDivElement>(null);
+  const isMouseDown = useRef<boolean>(false);
   const startAngleRef = useRef<number | null>(null);
   const startRotationRef = useRef<number>(0);
-  const isMouseDown = useRef<boolean>(false);
-  
-  const maxPoints = 12;
-  const progress = Math.max(0, Math.min(1, atzencoins / maxPoints));
-  const pointsPerSpin = 12;
-  const step = 90; // 90 degrees per step
+  const lastPlusOneAngle = useRef<number>(0);
+  const lastPoint = useRef<{ x: number; y: number } | null>(null);
+  const plusOneCounter = useRef<number>(0);
+  const hasAutoClaimed = useRef<boolean>(false); // Prevent multiple automatic claims
+  const maxPoints = 12; // Maximum points per session
+  const spinCooldown = 200; // Minimum time between spins (ms) - increased to prevent jumping
+  const step = 60; // 60 degrees per step to prevent rapid jumping
+  const progress = Math.max(0, Math.min(1, sessionPoints / maxPoints)); // Use sessionPoints instead of atzencoins
 
   // Gold and booster probability (1 in 12 for testing)
   const checkGoldWin = () => {
@@ -65,37 +75,37 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
 
   const handleClaim = async () => {
     try {
-      const response = await fetch(`${API_URL}/push-points`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ points: maxPoints }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        setErrorOverlay(data.error || 'An error occurred');
-        setAtzencoins(0);
+      setIsClaiming(true);
+      const result = await pointsService.pushPoints(sessionPoints); // Use sessionPoints instead of maxPoints
+      
+      if (!result.success) {
+        console.error('❌ Claim failed:', result.error);
+        setErrorOverlay(result.error || 'An error occurred');
+        setIsClaiming(false);
         return;
       }
 
-      // Success - show claim overlay with transaction hash
-      setClaimPoints(maxPoints);
-      setShowClaimOverlay(true);
-      setAtzencoins(0);
-
-      // Check for gold win
-      if (checkGoldWin()) {
-        setShowGoldWinOverlay(true);
+      // Success - update the atzencoins state with the new total from backend
+      if (result.points !== undefined) {
+        setAtzencoins(result.points);
       }
+      
+      // Set session points to maxPoints after successful claim
+      setSessionPoints(maxPoints);
+      // Don't save to localStorage since we want them to reset on page reload
+      
+      // Set flag to prevent register overlay from showing again
+      setHasClaimedPoints(true);
+      localStorage.setItem('hasClaimedPoints', 'true');
+      
+      // Reset the hasAutoClaimed flag after successful claim
+      hasAutoClaimed.current = false;
 
     } catch (error) {
-      console.error('Push points error:', error);
+      console.error('❌ Push points error:', error);
       setErrorOverlay('Network error. Please try again.');
-      setAtzencoins(0);
+    } finally {
+      setIsClaiming(false);
     }
   };
 
@@ -146,28 +156,28 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
     const newRotation = startRotationRef.current + delta;
     setRotation(newRotation);
     
-    // Track 90-degree steps for gradual increment
-    const last = lastPlusOneAngle.current;
-    const diff = newRotation - last;
-    if (Math.abs(diff) >= step) {
-      const stepsPassed = Math.floor(Math.abs(diff) / step);
-      for (let i = 1; i <= stepsPassed; i++) {
-        if (atzencoins < maxPoints) {
-          const pointsToAdd = pointsPerSpin / 4; // 3 points per 90° step
-          setAtzencoins(prev => Math.min(prev + pointsToAdd, maxPoints));
-          
-          // Create +1 animations around the wheel
-          for (let j = 0; j < 4; j++) {
-            const angle = (j * 90) + (newRotation % 360);
-            const angleRad = (angle * Math.PI) / 180;
-            const rimRadius = 180;
-            const animX = centerX + rimRadius * Math.cos(angleRad);
-            const animY = centerY + rimRadius * Math.sin(angleRad);
-            addPlusOneAtPosition(animX, animY, 1);
-          }
-        }
+    // Track rotation and add points based on time, not steps
+    const now = Date.now();
+    
+    // Only add points if enough time has passed and we haven't reached max
+    if (now - lastSpinTime >= spinCooldown && sessionPoints < maxPoints) {
+      // Add 1 point per spin with cooldown
+      setSessionPoints(prev => {
+        const newSessionPoints = Math.min(prev + 1, maxPoints);
+        return newSessionPoints;
+      });
+      
+      // Create +1 animations around the wheel
+      for (let j = 0; j < 4; j++) {
+        const angle = (j * 90) + (newRotation % 360);
+        const angleRad = (angle * Math.PI) / 180;
+        const rimRadius = 180;
+        const animX = centerX + rimRadius * Math.cos(angleRad);
+        const animY = centerY + rimRadius * Math.sin(angleRad);
+        addPlusOneAtPosition(animX, animY, 1);
       }
-      lastPlusOneAngle.current = last + step * stepsPassed * Math.sign(diff);
+      
+      setLastSpinTime(now);
     }
     
     lastPoint.current = { x: e.clientX, y: e.clientY };
@@ -177,16 +187,13 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
     isMouseDown.current = false;
     setIsDragging(false);
     lastPoint.current = null;
-    if (atzencoins >= maxPoints) {
-      setShowRegisterOverlay(true);
-    }
   };
 
   const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     if (!wheelRef.current) return;
     
-    const touch = e.touches[0];
     const rect = wheelRef.current.getBoundingClientRect();
+    const touch = e.touches[0];
     const x = touch.clientX - rect.left;
     const y = touch.clientY - rect.top;
     
@@ -231,28 +238,28 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
     const newRotation = startRotationRef.current + delta;
     setRotation(newRotation);
     
-    // Track 90-degree steps for gradual increment
-    const last = lastPlusOneAngle.current;
-    const diff = newRotation - last;
-    if (Math.abs(diff) >= step) {
-      const stepsPassed = Math.floor(Math.abs(diff) / step);
-      for (let i = 1; i <= stepsPassed; i++) {
-        if (atzencoins < maxPoints) {
-          const pointsToAdd = pointsPerSpin / 4; // 3 points per 90° step
-          setAtzencoins(prev => Math.min(prev + pointsToAdd, maxPoints));
-          
-          // Create +1 animations around the wheel
-          for (let j = 0; j < 4; j++) {
-            const angle = (j * 90) + (newRotation % 360);
-            const angleRad = (angle * Math.PI) / 180;
-            const rimRadius = 180;
-            const animX = centerX + rimRadius * Math.cos(angleRad);
-            const animY = centerY + rimRadius * Math.sin(angleRad);
-            addPlusOneAtPosition(animX, animY, 1);
-          }
-        }
+    // Track rotation and add points based on time, not steps
+    const now = Date.now();
+    
+    // Only add points if enough time has passed and we haven't reached max
+    if (now - lastSpinTime >= spinCooldown && sessionPoints < maxPoints) {
+      // Add 1 point per spin with cooldown
+      setSessionPoints(prev => {
+        const newSessionPoints = Math.min(prev + 1, maxPoints);
+        return newSessionPoints;
+      });
+      
+      // Create +1 animations around the wheel
+      for (let j = 0; j < 4; j++) {
+        const angle = (j * 90) + (newRotation % 360);
+        const angleRad = (angle * Math.PI) / 180;
+        const rimRadius = 180;
+        const animX = centerX + rimRadius * Math.cos(angleRad);
+        const animY = centerY + rimRadius * Math.sin(angleRad);
+        addPlusOneAtPosition(animX, animY, 1);
       }
-      lastPlusOneAngle.current = last + step * stepsPassed * Math.sign(diff);
+      
+      setLastSpinTime(now);
     }
     
     lastPoint.current = { x: touch.clientX, y: touch.clientY };
@@ -262,9 +269,6 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
     isMouseDown.current = false;
     setIsDragging(false);
     lastPoint.current = null;
-    if (atzencoins >= maxPoints) {
-      setShowRegisterOverlay(true);
-    }
   };
 
   const handleRegisterOverlayClose = () => {
@@ -273,37 +277,273 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
     localStorage.setItem('registerOverlayDismissed', 'true');
   };
 
+  // Function to refresh scoreboard with latest points from backend
+  const refreshScoreboard = async () => {
+    try {
+      console.log('🔄 Refreshing scoreboard with latest points from backend');
+      const currentPoints = await pointsService.getCurrentPoints();
+      console.log('📊 Backend points:', currentPoints, 'Current atzencoins:', atzencoins);
+      
+      if (currentPoints !== atzencoins) {
+        setAtzencoins(currentPoints);
+        console.log('✅ Scoreboard updated to:', currentPoints);
+      } else {
+        console.log('ℹ️ Scoreboard already up to date');
+      }
+    } catch (error) {
+      console.error('❌ Failed to refresh scoreboard:', error);
+    }
+  };
+
+  // New handler for successful registration - this should be called by the register component
+  const handleSuccessfulRegistration = async () => {
+    console.log('🎉 User successfully registered, claiming session points:', sessionPoints);
+    
+    // Always claim points when registration is successful
+    if (sessionPoints > 0) {
+      console.log('🎯 Claiming points after successful registration');
+      await handleClaim();
+      console.log('✅ Points claimed successfully, session points remain at:', sessionPoints);
+    } else {
+      console.log('⚠️ No session points to claim');
+    }
+    
+    // Refresh scoreboard to show latest cumulative points
+    await refreshScoreboard();
+  };
+
   const handleShowLoginRegister = () => {
     setShowLoginOverlay(true);
   };
 
-  // Handle claim when bar is full
+  // Check authentication status independently (can happen at any time)
+  // Handle session completion (when user reaches 12 points)
   useEffect(() => {
-    if (atzencoins >= maxPoints) {
-      // Call backend claim endpoint
-      fetch('/api/claim', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: 'wheel-claim' }),
-      })
-        .then(async res => {
-          const data = await res.json();
-          if (!res.ok && data.error) {
-            setErrorOverlay(data.error);
-            // DON'T reset the bar on error - let user see their points
+    console.log('🔍 Session points:', sessionPoints, 'Max points:', maxPoints, 'Overlay shown this session:', overlayShownThisSession);
+    
+    if (sessionPoints >= maxPoints && !overlayShownThisSession) {
+      console.log('🎯 Session full, checking authentication');
+      
+      const checkAuthAndHandle = async () => {
+        try {
+          const authStatus = await authService.checkAuthStatus();
+          console.log('🔍 Auth status:', authStatus);
+          
+          if (authStatus.authenticated) {
+            // User is authenticated, add session points to their account
+            console.log('🎯 User authenticated, adding session points to account');
+            handleClaim();
           } else {
-            // Success - reset the bar and show success message
-            setAtzencoins(0);
-            // TODO: Show success overlay with confetti
+            // User not authenticated, show register overlay
+            console.log('🎯 User not authenticated, showing register overlay');
+            setShowRegisterOverlay(true);
+            setOverlayShownThisSession(true);
+            localStorage.setItem('overlayShownThisSession', 'true');
           }
-        })
-        .catch(() => {
-          setErrorOverlay('Network error. Please try again.');
-          // DON'T reset the bar on network error
-        });
+        } catch (error) {
+          console.error('❌ Error checking auth status:', error);
+          // Fallback to showing overlay if auth check fails
+          console.log('🎯 Auth check failed, showing register overlay');
+          setShowRegisterOverlay(true);
+          setOverlayShownThisSession(true);
+            localStorage.setItem('overlayShownThisSession', 'true');
+        }
+      };
+      
+      checkAuthAndHandle();
+    } else if (sessionPoints >= maxPoints) {
+      console.log('⚠️ Session full but overlay already shown this session');
+    } else {
+      console.log('ℹ️ Session not full yet');
     }
-  }, [atzencoins, maxPoints]);
+  }, [sessionPoints, maxPoints, overlayShownThisSession]);
+
+  // Reset register overlay dismissed flag when session resets
+  useEffect(() => {
+    if (sessionPoints === 0 && registerOverlayDismissed) {
+      setRegisterOverlayDismissed(false);
+      localStorage.removeItem('registerOverlayDismissed');
+    }
+  }, [sessionPoints, registerOverlayDismissed]);
+
+  // Debug overlay state changes
+  useEffect(() => {
+    console.log('🔍 Overlay state changed - showRegisterOverlay:', showRegisterOverlay, 'showLoginOverlay:', showLoginOverlay, 'registerOverlayDismissed:', registerOverlayDismissed);
+  }, [showRegisterOverlay, showLoginOverlay, registerOverlayDismissed]);
+
+  // Remove automatic claim trigger - points should only be claimed after registration
+  // useEffect(() => {
+  //   if (sessionPoints >= maxPoints && !isClaiming && !hasAutoClaimed.current) {
+  //     console.log('🎯 Session full, automatically claiming points');
+  //     hasAutoClaimed.current = true; // Prevent multiple claims
+  //     handleClaim();
+  //   } else if (sessionPoints < maxPoints) {
+  //     // Reset the flag when session points drop below max
+  //     hasAutoClaimed.current = false;
+  //   }
+  // }, [sessionPoints, maxPoints, isClaiming]);
+
+  // Fetch latest points from backend when component mounts
+  useEffect(() => {
+    const fetchLatestPoints = async () => {
+      try {
+        const currentPoints = await pointsService.getCurrentPoints();
+        
+        // Only update total points (atzencoins) from backend, don't affect session points
+        if (currentPoints !== atzencoins) {
+          setAtzencoins(currentPoints);
+        }
+        
+        // Session points should remain independent and not be affected by backend fetch
+      } catch (error) {
+        console.error('❌ Failed to fetch latest points:', error);
+      }
+    };
+
+    fetchLatestPoints();
+  }, []); // Empty dependency array means this runs once when component mounts
+
+  // Function to start a new session (called when QR code is scanned)
+  const startNewSession = () => {
+    setSessionPoints(0);
+    localStorage.removeItem('sessionPoints');
+    setRegisterOverlayDismissed(false);
+    localStorage.removeItem('registerOverlayDismissed');
+    setHasClaimedPoints(false);
+    localStorage.removeItem('hasClaimedPoints');
+    setOverlayShownThisSession(false);
+    localStorage.removeItem('overlayShownThisSession');
+    hasAutoClaimed.current = false;
+  };
+
+  // Expose startNewSession function globally so it can be called from QR scanner
+  useEffect(() => {
+    (window as any).startNewSession = startNewSession;
+    return () => {
+      delete (window as any).startNewSession;
+    };
+  }, []);
+
+  // Don't save session points to localStorage - they should reset on page reload
+
+  // Handle Google OAuth popup success
+  useEffect(() => {
+    // Check for oauth=success URL parameter
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('oauth') === 'success') {
+      console.log('🎯 Google OAuth success detected via URL parameter');
+      
+      // Always refresh scoreboard when user logs in
+      refreshScoreboard();
+      
+      // Dismiss all overlays since user is now logged in
+      console.log('🎯 Dismissing all overlays after successful login');
+      console.log('🎯 Before dismissal - showRegisterOverlay:', showRegisterOverlay, 'showLoginOverlay:', showLoginOverlay);
+      
+      setShowRegisterOverlay(false);
+      setShowLoginOverlay(false);
+      setRegisterOverlayDismissed(true);
+      localStorage.setItem('registerOverlayDismissed', 'true');
+      setOverlayShownThisSession(true);
+      localStorage.setItem('overlayShownThisSession', 'true');
+      
+      // Force a re-render by updating state
+      setTimeout(() => {
+        console.log('🎯 After timeout - setting overlays to false');
+        setShowRegisterOverlay(false);
+        setShowLoginOverlay(false);
+      }, 100);
+      
+      // If there are session points, claim them
+      if (sessionPoints > 0) {
+        console.log('🎯 Claiming session points:', sessionPoints);
+        setHasClaimedPoints(true);
+        localStorage.setItem('hasClaimedPoints', 'true');
+        setIsClaiming(true);
+        handleClaim();
+      }
+      
+      // Clean up the URL parameter
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+    
+    const handleOAuthSuccess = (event: MessageEvent) => {
+      console.log('🎯 Received message event:', event.data, 'from:', event.origin);
+      if (event.data === 'oauth-success') {
+        console.log('🎯 Google OAuth popup success detected');
+        
+        // Always refresh scoreboard when user logs in
+        refreshScoreboard();
+        
+        // Dismiss all overlays since user is now logged in
+        console.log('🎯 Dismissing all overlays after successful login');
+        console.log('🎯 Before dismissal - showRegisterOverlay:', showRegisterOverlay, 'showLoginOverlay:', showLoginOverlay);
+        
+        setShowRegisterOverlay(false);
+        setShowLoginOverlay(false);
+        setRegisterOverlayDismissed(true);
+        localStorage.setItem('registerOverlayDismissed', 'true');
+        setOverlayShownThisSession(true);
+        localStorage.setItem('overlayShownThisSession', 'true');
+        
+        // Force a re-render by updating state
+        setTimeout(() => {
+          console.log('🎯 After timeout - setting overlays to false');
+          setShowRegisterOverlay(false);
+          setShowLoginOverlay(false);
+        }, 100);
+        
+        // If there are session points, claim them
+        if (sessionPoints > 0) {
+          console.log('🎯 Claiming session points:', sessionPoints);
+          setHasClaimedPoints(true);
+          localStorage.setItem('hasClaimedPoints', 'true');
+          setIsClaiming(true);
+          handleClaim();
+        }
+      }
+    };
+
+    window.addEventListener('message', handleOAuthSuccess);
+    return () => window.removeEventListener('message', handleOAuthSuccess);
+  }, [sessionPoints]);
+
+  // Fallback: Periodically check if user is authenticated when overlay is shown
+  useEffect(() => {
+    let authCheckInterval: NodeJS.Timeout | null = null;
+    if (showRegisterOverlay || showLoginOverlay) {
+      authCheckInterval = setInterval(async () => {
+        try {
+          const authStatus = await authService.checkAuthStatus();
+          if (authStatus.authenticated) {
+            console.log('🎯 User authenticated via periodic check, dismissing overlays');
+            setShowRegisterOverlay(false);
+            setShowLoginOverlay(false);
+            setRegisterOverlayDismissed(true);
+            localStorage.setItem('registerOverlayDismissed', 'true');
+            setOverlayShownThisSession(true);
+            localStorage.setItem('overlayShownThisSession', 'true');
+            refreshScoreboard();
+            
+            if (sessionPoints > 0) {
+              setHasClaimedPoints(true);
+              localStorage.setItem('hasClaimedPoints', 'true');
+              setIsClaiming(true);
+              handleClaim();
+            }
+          }
+        } catch (error) {
+          console.error('❌ Error checking auth status:', error);
+        }
+      }, 2000); // Check every 2 seconds
+    }
+    
+    return () => {
+      if (authCheckInterval) {
+        clearInterval(authCheckInterval);
+      }
+    };
+  }, [showRegisterOverlay, showLoginOverlay, sessionPoints]);
 
   // Helper to map backend error to overlay message
   function getOverlayMessage(error: string) {
@@ -344,7 +584,7 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
           justifyContent: 'center', 
           boxShadow: '0 2px 8px #0001' 
         }}>
-          Atzencoins: {atzencoins}
+          Atzencoins: {sessionPoints}
         </div>
       </div>
       <div className="wheel-section" style={{ marginTop: 200 }}>
@@ -381,6 +621,59 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
           style={{ width: `${(1 - progress) * 100}%` }}
         />
       </div>
+
+      {/* Debug Reset Button - Remove in production */}
+      <button
+        onClick={() => {
+          startNewSession();
+        }}
+        style={{
+          position: 'fixed',
+          top: 100,
+          right: 20,
+          background: '#ff4444',
+          color: 'white',
+          border: 'none',
+          borderRadius: 8,
+          padding: '12px 16px',
+          fontSize: 14,
+          fontWeight: 'bold',
+          cursor: 'pointer',
+          zIndex: 9999,
+          boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          userSelect: 'none',
+          minWidth: '120px'
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = '#ff6666';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = '#ff4444';
+        }}
+      >
+        🔄 New Session
+      </button>
+
+      {/* {showResetConfirmation && (
+        <div style={{
+          position: 'fixed',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          background: 'rgba(0,0,0,0.7)',
+          color: 'white',
+          padding: '20px',
+          borderRadius: 10,
+          zIndex: 10000,
+          textAlign: 'center',
+          fontSize: 20,
+          fontWeight: 'bold',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.5)'
+        }}>
+          Session Reset!
+        </div>
+      )} */}
+
       <AnimatePresence>
         {plusOnes.map(plusOne => (
           <motion.div
@@ -391,14 +684,15 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
             exit={{ opacity: 0 }}
             transition={{ duration: 2 }}
             style={{
-              left: plusOne.x,
-              top: plusOne.y,
+              position: 'absolute',
+              left: `${plusOne.x}px`,
+              top: `${plusOne.y}px`,
               color: ORANGE,
               fontSize: 32,
               fontWeight: 'bold',
-              position: 'absolute',
               pointerEvents: 'none',
               zIndex: 10,
+              transform: 'translate(-50%, -50%)',
             }}
           >
             +1
@@ -411,6 +705,7 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
         <RegisterOverlay
           atzencoins={atzencoins}
           onClose={handleRegisterOverlayClose}
+          onSuccessfulRegistration={handleSuccessfulRegistration}
         />
       )}
       {showLoginOverlay && (
@@ -420,34 +715,7 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
           mode="menu"
         />
       )}
-      {/* Instagram Button */}
-      <button
-        aria-label="Instagram"
-        tabIndex={-1}
-        onMouseDown={e => e.preventDefault()}
-        onTouchStart={e => e.preventDefault()}
-        style={{
-          position: 'absolute',
-          bottom: 20,
-          right: 24,
-          background: '#EDD1B2',
-          color: GREEN,
-          borderRadius: '50%',
-          width: 56,
-          height: 56,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          border: 'none',
-          zIndex: 2000,
-          cursor: 'pointer',
-        }}
-        onClick={() => window.open('https://www.instagram.com/atzengold/', '_blank')}
-      >
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z" fill={GREEN}/>
-        </svg>
-      </button>
+
       {errorOverlay && (
         <ErrorOverlay message={errorOverlay} onClose={() => setErrorOverlay(null)} />
       )}
