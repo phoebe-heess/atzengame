@@ -32,7 +32,16 @@ function App() {
   useEffect(() => {
     const ageChecked = localStorage.getItem('ageChecked');
     const dsgvoAccepted = localStorage.getItem('dsgvoAccepted');
-    setShowAgeCheck(!(ageChecked === 'true' && dsgvoAccepted === 'true'));
+    
+    // Show age check if either value is missing or not 'true'
+    const shouldShowAgeCheck = !(ageChecked === 'true' && dsgvoAccepted === 'true');
+    setShowAgeCheck(shouldShowAgeCheck);
+    
+    console.log('🔍 Age check status:', {
+      ageChecked,
+      dsgvoAccepted,
+      shouldShowAgeCheck
+    });
   }, []);
 
   useEffect(() => {

@@ -41,6 +41,17 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
   const [claimPoints, setClaimPoints] = useState<number>(0);
   const [showGoldWinOverlay, setShowGoldWinOverlay] = useState<boolean>(false);
 
+  // ===== GOLD WIN SYSTEM (INACTIVE) =====
+  // Based on research from atzenwin-clean build
+  // TODO: When ready to activate:
+  // 1. Set GOLD_WIN_ENABLED = true
+  // 2. Create GoldWinOverlay component (similar to RegisterOverlay)
+  // 3. Add overlay rendering in JSX with AnimatePresence
+  // 4. Add backend service to track gold wins
+  // 5. Consider adjusting probabilities for production (currently 33% each)
+  const [goldWinResult, setGoldWinResult] = useState<'none' | 'gold' | 'booster' | 'lose'>('none');
+  const GOLD_WIN_ENABLED = false; // Set to true to activate gold win system
+
   const wheelRef = useRef<HTMLDivElement>(null);
   const isMouseDown = useRef<boolean>(false);
   const startAngleRef = useRef<number | null>(null);
@@ -49,18 +60,48 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
   const lastPoint = useRef<{ x: number; y: number } | null>(null);
   const plusOneCounter = useRef<number>(0);
   const hasAutoClaimed = useRef<boolean>(false); // Prevent multiple automatic claims
-  const maxPoints = 12; // Maximum points per session
+  // POINT SYSTEM CONFIGURATION - EASY REVERT
+  const USE_NEW_POINT_SYSTEM = true; // Set to false to revert to old system
+  
+  const maxPoints = USE_NEW_POINT_SYSTEM ? 560 : 12; // Maximum points per session
   const spinCooldown = 200; // Minimum time between spins (ms) - increased to prevent jumping
   const step = 60; // 60 degrees per step to prevent rapid jumping
+  
+  // New point system: ~17 points per full turn (560 points ÷ 30 turns ≈ 18.7 points per turn)
+  // Award 1 point every ~19.2 degrees (360° ÷ 18.7 ≈ 19.2°)
+  const degreesPerPoint = USE_NEW_POINT_SYSTEM ? 19.2 : 60; // Old system used 60° steps
   const progress = Math.max(0, Math.min(1, sessionPoints / maxPoints)); // Use sessionPoints instead of atzencoins
 
-  // Gold and booster probability (1 in 12 for testing)
+  // Gold win system probabilities (inactive until GOLD_WIN_ENABLED = true)
   const checkGoldWin = () => {
-    return Math.random() < 1/12;
+    // Based on atzenwin-clean research: 33.33% chance (1 in 3)
+    // For production, consider lowering to 1-5% for rarity
+    return GOLD_WIN_ENABLED && Math.random() < 1/3;
   };
 
   const checkBoosterWin = () => {
-    return Math.random() < 1/12;
+    return GOLD_WIN_ENABLED && Math.random() < 1/3;
+  };
+
+  // Enhanced gold win trigger logic (from atzenwin-clean research)
+  const triggerGoldWinCheck = (rotationAmount: number) => {
+    if (!GOLD_WIN_ENABLED || rotationAmount < 300) return; // Must rotate >300 degrees
+    
+    const outcomes = ['gold', 'booster', 'lose'];
+    const randomOutcome = outcomes[Math.floor(Math.random() * outcomes.length)] as typeof goldWinResult;
+    
+    setGoldWinResult(randomOutcome);
+    
+    if (randomOutcome === 'gold') {
+      console.log('🥇 GOLD WIN! (System currently inactive)');
+      // Future: setShowGoldWinOverlay(true);
+    } else if (randomOutcome === 'booster') {
+      console.log('🚀 BOOSTER WIN! (System currently inactive)');
+      // Future: show booster overlay
+    } else {
+      console.log('😞 No win this time (System currently inactive)');
+      // Future: show try again overlay
+    }
   };
 
   const addPlusOneAtPosition = (x: number, y: number, count: number = 1) => {
@@ -76,6 +117,7 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
   const handleClaim = async () => {
     try {
       setIsClaiming(true);
+      console.log('🎯 Starting claim for', sessionPoints, 'points');
       const result = await pointsService.pushPoints(sessionPoints); // Use sessionPoints instead of maxPoints
       
       if (!result.success) {
@@ -87,6 +129,7 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
 
       // Success - update the atzencoins state with the new total from backend
       if (result.points !== undefined) {
+        console.log('✅ Claim successful! Updating atzencoins from', atzencoins, 'to', result.points);
         setAtzencoins(result.points);
       }
       
@@ -150,43 +193,86 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
     if (dx * dx + dy * dy > radius * radius) return;
     
     const angle = Math.atan2(e.clientY - (rect.top + rect.height / 2), e.clientX - (rect.left + rect.width / 2)) * 180 / Math.PI;
-    let delta = angle - (startAngleRef.current ?? 0);
-    if (delta > 180) delta -= 360;
-    if (delta < -180) delta += 360;
-    const newRotation = startRotationRef.current + delta;
+    const deltaAngle = angle - startAngleRef.current!;
+    const newRotation = startRotationRef.current + deltaAngle;
+    
     setRotation(newRotation);
     
-    // Track rotation and add points based on time, not steps
-    const now = Date.now();
-    
-    // Only add points if enough time has passed and we haven't reached max
-    if (now - lastSpinTime >= spinCooldown && sessionPoints < maxPoints) {
-      // Add 1 point per spin with cooldown
-      setSessionPoints(prev => {
-        const newSessionPoints = Math.min(prev + 1, maxPoints);
-        return newSessionPoints;
-      });
+    if (USE_NEW_POINT_SYSTEM) {
+      // NEW SYSTEM: Track rotation and add points based on degrees rotated
+      // Normalize angles to handle 360°/0° boundary crossing
+      const normalizeAngle = (angle: number) => ((angle % 360) + 360) % 360;
+      const currentAngle = normalizeAngle(newRotation);
+      const lastAngle = normalizeAngle(lastPlusOneAngle.current);
       
-      // Create +1 animations around the wheel
-      for (let j = 0; j < 4; j++) {
-        const angle = (j * 90) + (newRotation % 360);
-        const angleRad = (angle * Math.PI) / 180;
-        const rimRadius = 180;
-        const animX = centerX + rimRadius * Math.cos(angleRad);
-        const animY = centerY + rimRadius * Math.sin(angleRad);
-        addPlusOneAtPosition(animX, animY, 1);
+      // Calculate the shortest rotation difference
+      let rotationDiff = currentAngle - lastAngle;
+      if (rotationDiff > 180) {
+        rotationDiff -= 360;
+      } else if (rotationDiff < -180) {
+        rotationDiff += 360;
       }
       
-      setLastSpinTime(now);
+      // Only consider positive rotation (forward spinning)
+      const absRotationDiff = Math.abs(rotationDiff);
+      
+      if (absRotationDiff >= degreesPerPoint && sessionPoints < maxPoints) {
+        // Add 1 point per degree threshold crossed
+        const pointsToAdd = Math.floor(absRotationDiff / degreesPerPoint);
+        const actualPointsToAdd = Math.min(pointsToAdd, maxPoints - sessionPoints);
+        
+        if (actualPointsToAdd > 0) {
+          setSessionPoints(prev => prev + actualPointsToAdd);
+          
+          // Create +1 animations - limit to max 3 at once to prevent spam
+          const animationsToShow = Math.min(actualPointsToAdd, 3);
+          for (let i = 0; i < animationsToShow; i++) {
+            const animAngle = (newRotation + (i * 45)) % 360;
+            const angleRad = (animAngle * Math.PI) / 180;
+            const rimRadius = 180;
+            const animX = centerX + rimRadius * Math.cos(angleRad);
+            const animY = centerY + rimRadius * Math.sin(angleRad);
+            addPlusOneAtPosition(animX, animY, actualPointsToAdd > 3 ? Math.ceil(actualPointsToAdd / 3) : 1);
+          }
+          
+          // Update the last angle where we awarded points
+          lastPlusOneAngle.current = currentAngle - (absRotationDiff % degreesPerPoint);
+        }
+      }
+    } else {
+      // OLD SYSTEM: Track rotation and add points based on time, not steps
+      const now = Date.now();
+      
+      // Only add points if enough time has passed and we haven't reached max
+      if (now - lastSpinTime >= spinCooldown && sessionPoints < maxPoints) {
+        // Add 1 point per spin with cooldown
+        setSessionPoints(prev => {
+          const newSessionPoints = Math.min(prev + 1, maxPoints);
+          return newSessionPoints;
+        });
+        
+        // Create +1 animations around the wheel
+        for (let j = 0; j < 4; j++) {
+          const angle = (j * 90) + (newRotation % 360);
+          const angleRad = (angle * Math.PI) / 180;
+          const rimRadius = 180;
+          const animX = centerX + rimRadius * Math.cos(angleRad);
+          const animY = centerY + rimRadius * Math.sin(angleRad);
+          addPlusOneAtPosition(animX, animY, 1);
+        }
+        
+        setLastSpinTime(now);
+      }
     }
-    
-    lastPoint.current = { x: e.clientX, y: e.clientY };
   };
 
   const handleMouseUp = () => {
     isMouseDown.current = false;
     setIsDragging(false);
     lastPoint.current = null;
+    
+    // Trigger gold win check (inactive until GOLD_WIN_ENABLED = true)
+    triggerGoldWinCheck(Math.abs(rotation));
   };
 
   const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
@@ -218,8 +304,8 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
   const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
     if (!isMouseDown.current || !wheelRef.current) return;
     
-    const touch = e.touches[0];
     const rect = wheelRef.current.getBoundingClientRect();
+    const touch = e.touches[0];
     const x = touch.clientX - rect.left;
     const y = touch.clientY - rect.top;
     
@@ -232,43 +318,86 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
     if (dx * dx + dy * dy > radius * radius) return;
     
     const angle = Math.atan2(touch.clientY - (rect.top + rect.height / 2), touch.clientX - (rect.left + rect.width / 2)) * 180 / Math.PI;
-    let delta = angle - (startAngleRef.current ?? 0);
-    if (delta > 180) delta -= 360;
-    if (delta < -180) delta += 360;
-    const newRotation = startRotationRef.current + delta;
+    const deltaAngle = angle - startAngleRef.current!;
+    const newRotation = startRotationRef.current + deltaAngle;
+    
     setRotation(newRotation);
     
-    // Track rotation and add points based on time, not steps
-    const now = Date.now();
-    
-    // Only add points if enough time has passed and we haven't reached max
-    if (now - lastSpinTime >= spinCooldown && sessionPoints < maxPoints) {
-      // Add 1 point per spin with cooldown
-      setSessionPoints(prev => {
-        const newSessionPoints = Math.min(prev + 1, maxPoints);
-        return newSessionPoints;
-      });
+    if (USE_NEW_POINT_SYSTEM) {
+      // NEW SYSTEM: Track rotation and add points based on degrees rotated
+      // Normalize angles to handle 360°/0° boundary crossing
+      const normalizeAngle = (angle: number) => ((angle % 360) + 360) % 360;
+      const currentAngle = normalizeAngle(newRotation);
+      const lastAngle = normalizeAngle(lastPlusOneAngle.current);
       
-      // Create +1 animations around the wheel
-      for (let j = 0; j < 4; j++) {
-        const angle = (j * 90) + (newRotation % 360);
-        const angleRad = (angle * Math.PI) / 180;
-        const rimRadius = 180;
-        const animX = centerX + rimRadius * Math.cos(angleRad);
-        const animY = centerY + rimRadius * Math.sin(angleRad);
-        addPlusOneAtPosition(animX, animY, 1);
+      // Calculate the shortest rotation difference
+      let rotationDiff = currentAngle - lastAngle;
+      if (rotationDiff > 180) {
+        rotationDiff -= 360;
+      } else if (rotationDiff < -180) {
+        rotationDiff += 360;
       }
       
-      setLastSpinTime(now);
+      // Only consider positive rotation (forward spinning)
+      const absRotationDiff = Math.abs(rotationDiff);
+      
+      if (absRotationDiff >= degreesPerPoint && sessionPoints < maxPoints) {
+        // Add 1 point per degree threshold crossed
+        const pointsToAdd = Math.floor(absRotationDiff / degreesPerPoint);
+        const actualPointsToAdd = Math.min(pointsToAdd, maxPoints - sessionPoints);
+        
+        if (actualPointsToAdd > 0) {
+          setSessionPoints(prev => prev + actualPointsToAdd);
+          
+          // Create +1 animations - limit to max 3 at once to prevent spam
+          const animationsToShow = Math.min(actualPointsToAdd, 3);
+          for (let i = 0; i < animationsToShow; i++) {
+            const animAngle = (newRotation + (i * 45)) % 360;
+            const angleRad = (animAngle * Math.PI) / 180;
+            const rimRadius = 180;
+            const animX = centerX + rimRadius * Math.cos(angleRad);
+            const animY = centerY + rimRadius * Math.sin(angleRad);
+            addPlusOneAtPosition(animX, animY, actualPointsToAdd > 3 ? Math.ceil(actualPointsToAdd / 3) : 1);
+          }
+          
+          // Update the last angle where we awarded points
+          lastPlusOneAngle.current = currentAngle - (absRotationDiff % degreesPerPoint);
+        }
+      }
+    } else {
+      // OLD SYSTEM: Track rotation and add points based on time, not steps
+      const now = Date.now();
+      
+      // Only add points if enough time has passed and we haven't reached max
+      if (now - lastSpinTime >= spinCooldown && sessionPoints < maxPoints) {
+        // Add 1 point per spin with cooldown
+        setSessionPoints(prev => {
+          const newSessionPoints = Math.min(prev + 1, maxPoints);
+          return newSessionPoints;
+        });
+        
+        // Create +1 animations around the wheel
+        for (let j = 0; j < 4; j++) {
+          const angle = (j * 90) + (newRotation % 360);
+          const angleRad = (angle * Math.PI) / 180;
+          const rimRadius = 180;
+          const animX = centerX + rimRadius * Math.cos(angleRad);
+          const animY = centerY + rimRadius * Math.sin(angleRad);
+          addPlusOneAtPosition(animX, animY, 1);
+        }
+        
+        setLastSpinTime(now);
+      }
     }
-    
-    lastPoint.current = { x: touch.clientX, y: touch.clientY };
   };
 
   const handleTouchEnd = () => {
     isMouseDown.current = false;
     setIsDragging(false);
     lastPoint.current = null;
+    
+    // Trigger gold win check (inactive until GOLD_WIN_ENABLED = true)
+    triggerGoldWinCheck(Math.abs(rotation));
   };
 
   const handleRegisterOverlayClose = () => {
@@ -361,6 +490,7 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
   // Reset register overlay dismissed flag when session resets
   useEffect(() => {
     if (sessionPoints === 0 && registerOverlayDismissed) {
+      console.log('🔄 Session reset, clearing register overlay dismissed flag');
       setRegisterOverlayDismissed(false);
       localStorage.removeItem('registerOverlayDismissed');
     }
@@ -370,7 +500,6 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
   useEffect(() => {
     console.log('🔍 Overlay state changed - showRegisterOverlay:', showRegisterOverlay, 'showLoginOverlay:', showLoginOverlay, 'registerOverlayDismissed:', registerOverlayDismissed);
   }, [showRegisterOverlay, showLoginOverlay, registerOverlayDismissed]);
-
   // Remove automatic claim trigger - points should only be claimed after registration
   // useEffect(() => {
   //   if (sessionPoints >= maxPoints && !isClaiming && !hasAutoClaimed.current) {
@@ -387,11 +516,17 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
   useEffect(() => {
     const fetchLatestPoints = async () => {
       try {
+        console.log('🔄 Fetching latest points from backend...');
         const currentPoints = await pointsService.getCurrentPoints();
+        console.log('📊 Backend returned points:', currentPoints);
+        console.log('📊 Current atzencoins state:', atzencoins);
         
         // Only update total points (atzencoins) from backend, don't affect session points
         if (currentPoints !== atzencoins) {
+          console.log('✅ Updating atzencoins from', atzencoins, 'to', currentPoints);
           setAtzencoins(currentPoints);
+        } else {
+          console.log('ℹ️ Points are the same, no update needed');
         }
         
         // Session points should remain independent and not be affected by backend fetch
@@ -414,6 +549,12 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
     setOverlayShownThisSession(false);
     localStorage.removeItem('overlayShownThisSession');
     hasAutoClaimed.current = false;
+    
+    // Also reset age check for a complete fresh start
+    localStorage.removeItem('ageChecked');
+    localStorage.removeItem('dsgvoAccepted');
+    
+    console.log('🔄 Starting new session - all localStorage cleared');
   };
 
   // Expose startNewSession function globally so it can be called from QR scanner
@@ -556,6 +697,9 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
     return 'An error occurred. Please try again.';
   }
 
+  // Debug logging
+  console.log('🎮 Rendering Winsite with atzencoins:', atzencoins, 'sessionPoints:', sessionPoints);
+
   return (
     <div className="game-page">
       <div style={{ 
@@ -622,37 +766,7 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
         />
       </div>
 
-      {/* Debug Reset Button - Remove in production */}
-      <button
-        onClick={() => {
-          startNewSession();
-        }}
-        style={{
-          position: 'fixed',
-          top: 100,
-          right: 20,
-          background: '#ff4444',
-          color: 'white',
-          border: 'none',
-          borderRadius: 8,
-          padding: '12px 16px',
-          fontSize: 14,
-          fontWeight: 'bold',
-          cursor: 'pointer',
-          zIndex: 9999,
-          boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-          userSelect: 'none',
-          minWidth: '120px'
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.background = '#ff6666';
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.background = '#ff4444';
-        }}
-      >
-        🔄 New Session
-      </button>
+
 
       {/* {showResetConfirmation && (
         <div style={{
@@ -703,7 +817,7 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
       <BurgerMenu onShowLoginRegister={handleShowLoginRegister} />
       {showRegisterOverlay && !registerOverlayDismissed && (
         <RegisterOverlay
-          atzencoins={atzencoins}
+          atzencoins={sessionPoints}
           onClose={handleRegisterOverlayClose}
           onSuccessfulRegistration={handleSuccessfulRegistration}
         />
@@ -715,6 +829,16 @@ export default function Winsite({ atzencoins, setAtzencoins }: WinsiteProps) {
           mode="menu"
         />
       )}
+
+      {/* GOLD WIN OVERLAY (INACTIVE) - TODO: Implement when GOLD_WIN_ENABLED = true */}
+      {/* 
+      {showGoldWinOverlay && GOLD_WIN_ENABLED && (
+        <GoldWinOverlay
+          result={goldWinResult}
+          onClose={() => setShowGoldWinOverlay(false)}
+        />
+      )}
+      */}
 
       {errorOverlay && (
         <ErrorOverlay message={errorOverlay} onClose={() => setErrorOverlay(null)} />
